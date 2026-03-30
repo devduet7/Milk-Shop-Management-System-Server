@@ -362,12 +362,12 @@ export const refreshToken = expressAsyncHandler(async (req, res) => {
 
 /**
  * USER LOGOUT
- * @param {import("express").Request} req - Request Object
+ * @param {import("express").Request} _req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
  */
 // <== USER LOGOUT ==>
-export const logout = expressAsyncHandler(async (req, res) => {
+export const logout = expressAsyncHandler(async (_req, res) => {
   // CLEARING ACCESS TOKEN COOKIE
   res.clearCookie("accessToken", {
     httpOnly: true,
