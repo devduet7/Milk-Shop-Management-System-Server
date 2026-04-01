@@ -1,8 +1,11 @@
+// <== CLIENT URL CONFIGURATION ==>
+const clientUrl = process.env.CLIENT_URL ?? "";
+
 // <== ALLOWED ORIGINS FOR CORS ==>
-const allowedOrigins = [
-  // FRONTEND LOCALHOST
-  "http://localhost:8080",
-];
+const allowedOrigins = clientUrl
+  .split(",")
+  .map((url) => url.trim())
+  .filter(Boolean);
 
 // <== EXPORTING ALLOWED ORIGINS ==>
 export default allowedOrigins;
