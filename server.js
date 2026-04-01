@@ -44,6 +44,12 @@ app.use("/", rootRoute);
 // USER ROUTE
 app.use("/api/v1/user", userRoutes);
 
+// <== HEALTH CHECK ROUTE ==>
+app.get("/health", (_req, res) => {
+  // HEALTH CHECK RESPONSE
+  res.status(200).json({ status: "Server is Healthy and Running 🤍" });
+});
+
 // <== MIDDLEWARE 404 RESPONSE ==>
 app.all("*", (req, res) => {
   // SETTING STATUS
