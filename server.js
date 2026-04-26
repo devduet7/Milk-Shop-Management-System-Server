@@ -12,6 +12,7 @@ import corsOptions from "./config/corsOptions.js";
 import { logEvents } from "./middleware/logger.js";
 import { getDirName } from "./utils/getDirName.js";
 import { app, server } from "./services/socket.js";
+import customerRoutes from "./routes/customer.route.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import helmetMiddleware from "./middleware/helmetMiddleware.js";
 
@@ -43,6 +44,8 @@ app.use("/", express.static(path.join(__dirname, "public")));
 app.use("/", rootRoute);
 // USER ROUTE
 app.use("/api/v1/user", userRoutes);
+// CUSTOMER ROUTE
+app.use("/api/v1/customers", customerRoutes);
 
 // <== HEALTH CHECK ROUTE ==>
 app.get("/health", (_req, res) => {
