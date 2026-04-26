@@ -13,6 +13,7 @@ import { logEvents } from "./middleware/logger.js";
 import { getDirName } from "./utils/getDirName.js";
 import { app, server } from "./services/socket.js";
 import customerRoutes from "./routes/customer.route.js";
+import purchaseRoutes from "./routes/purchase.route.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import expenditureRoutes from "./routes/expenditure.route.js";
 import helmetMiddleware from "./middleware/helmetMiddleware.js";
@@ -45,6 +46,8 @@ app.use("/", express.static(path.join(__dirname, "public")));
 app.use("/", rootRoute);
 // USER ROUTE
 app.use("/api/v1/user", userRoutes);
+// PURCHASE ROUTE
+app.use("/api/v1/purchases", purchaseRoutes);
 // CUSTOMER ROUTE
 app.use("/api/v1/customers", customerRoutes);
 // EXPENDITURE ROUTE
