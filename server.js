@@ -14,6 +14,7 @@ import { getDirName } from "./utils/getDirName.js";
 import { app, server } from "./services/socket.js";
 import customerRoutes from "./routes/customer.route.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import expenditureRoutes from "./routes/expenditure.route.js";
 import helmetMiddleware from "./middleware/helmetMiddleware.js";
 
 // <== DATABASE CONNECTION ==>
@@ -46,6 +47,8 @@ app.use("/", rootRoute);
 app.use("/api/v1/user", userRoutes);
 // CUSTOMER ROUTE
 app.use("/api/v1/customers", customerRoutes);
+// EXPENDITURE ROUTE
+app.use("/api/v1/expenditures", expenditureRoutes);
 
 // <== HEALTH CHECK ROUTE ==>
 app.get("/health", (_req, res) => {
