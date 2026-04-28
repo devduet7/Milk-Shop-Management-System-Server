@@ -6,6 +6,7 @@ import express from "express";
 import mongoose from "mongoose";
 import cookieParser from "cookie-parser";
 import rootRoute from "./routes/root.route.js";
+import saleRoutes from "./routes/sale.route.js";
 import userRoutes from "./routes/user.route.js";
 import connectDB from "./config/dbConnection.js";
 import corsOptions from "./config/corsOptions.js";
@@ -46,6 +47,8 @@ app.use("/", express.static(path.join(__dirname, "public")));
 app.use("/", rootRoute);
 // USER ROUTE
 app.use("/api/v1/user", userRoutes);
+// SALE ROUTE
+app.use("/api/v1/sales", saleRoutes);
 // PURCHASE ROUTE
 app.use("/api/v1/purchases", purchaseRoutes);
 // CUSTOMER ROUTE
