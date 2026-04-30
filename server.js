@@ -13,6 +13,7 @@ import corsOptions from "./config/corsOptions.js";
 import { logEvents } from "./middleware/logger.js";
 import { getDirName } from "./utils/getDirName.js";
 import { app, server } from "./services/socket.js";
+import recoveryRoutes from "./routes/recovery.route.js";
 import customerRoutes from "./routes/customer.route.js";
 import purchaseRoutes from "./routes/purchase.route.js";
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -53,6 +54,8 @@ app.use("/api/v1/sales", saleRoutes);
 app.use("/api/v1/purchases", purchaseRoutes);
 // CUSTOMER ROUTE
 app.use("/api/v1/customers", customerRoutes);
+// RECOVERY ROUTE
+app.use("/api/v1/recoveries", recoveryRoutes);
 // EXPENDITURE ROUTE
 app.use("/api/v1/expenditures", expenditureRoutes);
 
