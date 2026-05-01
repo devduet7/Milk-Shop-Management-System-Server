@@ -9,6 +9,7 @@ import rootRoute from "./routes/root.route.js";
 import saleRoutes from "./routes/sale.route.js";
 import userRoutes from "./routes/user.route.js";
 import connectDB from "./config/dbConnection.js";
+import staffRoutes from "./routes/staff.route.js";
 import corsOptions from "./config/corsOptions.js";
 import { logEvents } from "./middleware/logger.js";
 import { getDirName } from "./utils/getDirName.js";
@@ -50,6 +51,8 @@ app.use("/", rootRoute);
 app.use("/api/v1/user", userRoutes);
 // SALE ROUTE
 app.use("/api/v1/sales", saleRoutes);
+// STAFF ROUTE
+app.use("/api/v1/staff", staffRoutes);
 // PURCHASE ROUTE
 app.use("/api/v1/purchases", purchaseRoutes);
 // CUSTOMER ROUTE
