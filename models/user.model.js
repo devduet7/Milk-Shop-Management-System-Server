@@ -37,6 +37,40 @@ const userSchema = new mongoose.Schema(
         "Please Provide a Valid Phone Number with Country Code!",
       ],
     },
+    // ADDRESS FIELD (OPTIONAL)
+    address: {
+      type: String,
+      default: null,
+      trim: true,
+      maxlength: [300, "Address must not exceed 300 Characters!"],
+    },
+    // AVATAR FIELD (OPTIONAL — CLOUDINARY STORED)
+    avatar: {
+      url: { type: String, default: null },
+      publicId: { type: String, default: null },
+    },
+    // MILK RATE FIELD (PRICE PER LITER IN RUPEES)
+    milkRate: {
+      type: Number,
+      default: 120,
+      min: [1, "Milk Rate must be at least ₨1!"],
+    },
+    // YOGHURT RATE FIELD (PRICE PER KG IN RUPEES)
+    yoghurtRate: {
+      type: Number,
+      default: 180,
+      min: [1, "Yoghurt Rate must be at least ₨1!"],
+    },
+    // DAILY REPORTS ENABLED FLAG
+    dailyReportsEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    // MONTHLY REPORTS ENABLED FLAG
+    monthlyReportsEnabled: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true },
 );
