@@ -19,6 +19,7 @@ import recoveryRoutes from "./routes/recovery.route.js";
 import customerRoutes from "./routes/customer.route.js";
 import purchaseRoutes from "./routes/purchase.route.js";
 import quickSaleRoutes from "./routes/quickSale.route.js";
+import dashboardRoutes from "./routes/dashboard.route.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import expenditureRoutes from "./routes/expenditure.route.js";
 import helmetMiddleware from "./middleware/helmetMiddleware.js";
@@ -63,6 +64,8 @@ app.use("/api/v1/purchases", purchaseRoutes);
 app.use("/api/v1/customers", customerRoutes);
 // RECOVERY ROUTE
 app.use("/api/v1/recoveries", recoveryRoutes);
+// DASHBOARD ROUTE
+app.use("/api/v1/dashboard", dashboardRoutes);
 // QUICK SALE ROUTE
 app.use("/api/v1/quick-sales", quickSaleRoutes);
 // EXPENDITURE ROUTE
