@@ -18,6 +18,7 @@ import settingsRoutes from "./routes/settings.route.js";
 import recoveryRoutes from "./routes/recovery.route.js";
 import customerRoutes from "./routes/customer.route.js";
 import purchaseRoutes from "./routes/purchase.route.js";
+import analyticsRoutes from "./routes/analytics.route.js";
 import quickSaleRoutes from "./routes/quickSale.route.js";
 import dashboardRoutes from "./routes/dashboard.route.js";
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -66,6 +67,8 @@ app.use("/api/v1/customers", customerRoutes);
 app.use("/api/v1/recoveries", recoveryRoutes);
 // DASHBOARD ROUTE
 app.use("/api/v1/dashboard", dashboardRoutes);
+// ANALYTICS ROUTE
+app.use("/api/v1/analytics", analyticsRoutes);
 // QUICK SALE ROUTE
 app.use("/api/v1/quick-sales", quickSaleRoutes);
 // EXPENDITURE ROUTE
