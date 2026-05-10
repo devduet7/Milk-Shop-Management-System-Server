@@ -3,6 +3,7 @@ import {
   phoneChangeTemplate,
   emailChangeNewTemplate,
   passwordChangeTemplate,
+  forgotPasswordTemplate,
   emailChangeCurrentTemplate,
 } from "./emailTemplates.js";
 
@@ -99,5 +100,19 @@ export const sendEmailChangeNewOtp = async ({ to, fullName, code }) => {
     toName: fullName,
     subject: "Security Code — Verify Your New Email Address",
     htmlContent: emailChangeNewTemplate({ fullName, code }),
+  });
+};
+
+/**
+ * SEND FORGOT PASSWORD OTP TO THE EMAIL ADDRESS REGISTERED WITH THE ACCOUNT
+ */
+// <== SEND FORGOT PASSWORD OTP ==>
+export const sendForgotPasswordOtp = async ({ to, fullName, code }) => {
+  // SENDING FORGOT PASSWORD VERIFICATION EMAIL
+  await sendEmail({
+    to,
+    toName: fullName,
+    subject: "Security Code — Password Reset Request",
+    htmlContent: forgotPasswordTemplate({ fullName, code }),
   });
 };

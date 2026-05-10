@@ -3,6 +3,7 @@ import {
   sendPhoneChangeOtp,
   sendPasswordChangeOtp,
   sendEmailChangeNewOtp,
+  sendForgotPasswordOtp,
   sendEmailChangeCurrentOtp,
 } from "../services/emailService.js";
 import {
@@ -876,6 +877,224 @@ export const cancelSecurityCode = expressAsyncHandler(async (req, res) => {
   // RETURNING SUCCESS
   res.status(200).json({
     message: "Pending verification cancelled.",
+    success: true,
+  });
+  // RETURNING FROM FUNCTION
+  return;
+});
+
+/**
+ * INITIATE FORGOT PASSWORD — FINDS USER BY EMAIL, GENERATES OTP, SENDS TO THEIR EMAIL
+ * THIS IS A PUBLIC ENDPOINT — NO isAuthenticated MIDDLEWARE
+ * @param {import("express").Request} req - Request Object
+ * @param {import("express").Response} res - Response Object
+ * @returns {Promise<void>}
+ */
+// <== INITIATE FORGOT PASSWORD ==>
+export const initiateForgotPassword = expressAsyncHandler(async (req, res) => {
+  // GETTING EMAIL FROM REQUEST BODY
+  const { email } = req.body;
+  // FINDING USER BY EMAIL — NORMALISED TO LOWERCASE BY VALIDATOR
+  const user = await User.findOne({ email }).lean().exec();
+  // IF USER NOT FOUND — RETURN GENERIC SUCCESS TO PREVENT EMAIL ENUMERATION
+  if (!user) {
+    // RETURNING GENERIC SUCCESS RESPONSE WITHOUT REVEALING USER EXISTENCE
+    res.status(200).json({
+      message:
+        "If an account with that email exists, a verification code has been sent.",
+      success: true,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // DELETE ANY EXISTING FORGOT PASSWORD CODES FOR THIS USER BEFORE CREATING NEW ONE
+  await SecurityCode.deleteMany({
+    userId: user._id,
+    purpose: {
+      $in: [
+        SECURITY_CODE_PURPOSES.FORGOT_PASSWORD_OTP,
+        SECURITY_CODE_PURPOSES.FORGOT_PASSWORD_RESET,
+      ],
+    },
+  });
+  // GENERATING 6-DIGIT OTP CODE
+  const code = generateOtpCode();
+  // HASHING OTP CODE BEFORE STORING
+  const hashedCode = await bcrypt.hash(code, 10);
+  // CREATING SECURITY CODE DOCUMENT FOR FORGOT PASSWORD OTP VERIFICATION
+  await SecurityCode.create({
+    userId: user._id,
+    hashedCode,
+    purpose: SECURITY_CODE_PURPOSES.FORGOT_PASSWORD_OTP,
+    // STORING USER EMAIL AS PENDING VALUE FOR REFERENCE IN SUBSEQUENT STEPS
+    pendingValue: user.email,
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+  });
+  // SENDING FORGOT PASSWORD OTP TO USER'S REGISTERED EMAIL ADDRESS
+  await sendForgotPasswordOtp({
+    to: user.email,
+    fullName: user.fullName,
+    code,
+  });
+  // RETURNING SUCCESS RESPONSE
+  res.status(200).json({
+    message:
+      "If an account with that email exists, a verification code has been sent.",
+    success: true,
+  });
+  // RETURNING FROM FUNCTION
+  return;
+});
+
+/**
+ * VERIFY FORGOT PASSWORD OTP — VALIDATES CODE, CREATES SHORT-LIVED RESET PERMISSION TOKEN
+ * CONSUMING THE OTP CODE AND CREATING A RESET PERMISSION CODE ARE ATOMIC IN SEQUENCE
+ * @param {import("express").Request} req - Request Object
+ * @param {import("express").Response} res - Response Object
+ * @returns {Promise<void>}
+ */
+// <== VERIFY FORGOT PASSWORD OTP ==>
+export const verifyForgotPasswordOtp = expressAsyncHandler(async (req, res) => {
+  // GETTING EMAIL AND OTP CODE FROM REQUEST BODY
+  const { email, code } = req.body;
+  // FINDING USER BY EMAIL TO GET THEIR USER ID FOR SECURITY CODE LOOKUP
+  const user = await User.findOne({ email }).lean().exec();
+  // IF USER NOT FOUND — RETURN GENERIC INVALID CODE ERROR
+  if (!user) {
+    // RETURNING GENERIC ERROR TO PREVENT EMAIL ENUMERATION
+    res
+      .status(400)
+      .json({ message: "Invalid or expired code.", success: false });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // VERIFYING AND CONSUMING THE FORGOT PASSWORD OTP SECURITY CODE
+  const result = await verifyAndConsumeCode(
+    user._id,
+    SECURITY_CODE_PURPOSES.FORGOT_PASSWORD_OTP,
+    code,
+  );
+  // IF OTP VERIFICATION FAILED — RETURN ERROR WITH REMAINING ATTEMPTS INFO
+  if (!result.success) {
+    // RETURNING ERROR RESPONSE FROM VERIFY AND CONSUME CODE HELPER
+    res
+      .status(400)
+      .json({ message: result.error, success: false, code: result.code });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // OTP VERIFIED — CREATING A SHORT-LIVED RESET PERMISSION TOKEN
+  const resetPermissionToken =
+    Math.random().toString(36).slice(2) + Date.now().toString(36);
+  // HASHING RESET PERMISSION TOKEN BEFORE STORING (REQUIRED BY SCHEMA)
+  const hashedResetToken = await bcrypt.hash(resetPermissionToken, 10);
+  // CREATING RESET PERMISSION SECURITY CODE — EXPIRES IN 15 MINUTES
+  await SecurityCode.create({
+    userId: user._id,
+    hashedCode: hashedResetToken,
+    purpose: SECURITY_CODE_PURPOSES.FORGOT_PASSWORD_RESET,
+    pendingValue: user.email,
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+  });
+  // RETURNING SUCCESS — CLIENT SHOULD NOW SHOW NEW PASSWORD FORM
+  res.status(200).json({
+    message: "Code verified! You can now set your new password.",
+    success: true,
+  });
+  // RETURNING FROM FUNCTION
+  return;
+});
+
+/**
+ * RESET FORGOT PASSWORD — FINDS RESET PERMISSION TOKEN, APPLIES NEW PASSWORD
+ * THE PRESENCE OF A VALID FORGOT_PASSWORD_RESET TOKEN IS THE AUTHORISATION
+ * NO ADDITIONAL OTP IS REQUIRED AT THIS STEP
+ * @param {import("express").Request} req - Request Object
+ * @param {import("express").Response} res - Response Object
+ * @returns {Promise<void>}
+ */
+// <== RESET FORGOT PASSWORD ==>
+export const resetForgotPassword = expressAsyncHandler(async (req, res) => {
+  // GETTING EMAIL AND NEW PASSWORD FROM REQUEST BODY
+  const { email, newPassword } = req.body;
+  // FINDING USER BY EMAIL
+  const user = await User.findOne({ email }).lean().exec();
+  // IF USER NOT FOUND — RETURN GENERIC UNAUTHORISED ERROR
+  if (!user) {
+    // RETURNING UNAUTHORISED ERROR — CANNOT RESET FOR NON-EXISTENT USER
+    res.status(400).json({
+      message:
+        "Password reset session not found or expired. Please start again.",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // CHECKING FOR A VALID RESET PERMISSION TOKEN FOR THIS USER
+  const resetCode = await SecurityCode.findOne({
+    userId: user._id,
+    purpose: SECURITY_CODE_PURPOSES.FORGOT_PASSWORD_RESET,
+    used: false,
+    expiresAt: { $gt: new Date() },
+  })
+    .lean()
+    .exec();
+  // IF NO VALID RESET PERMISSION TOKEN EXISTS — SESSION EXPIRED OR NOT VERIFIED
+  if (!resetCode) {
+    // RETURNING SESSION EXPIRED ERROR
+    res.status(400).json({
+      message:
+        "Password reset session not found or expired. Please start again.",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // HASHING THE NEW PASSWORD BEFORE APPLYING TO THE USER ACCOUNT
+  const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+  // APPLYING NEW PASSWORD TO USER ACCOUNT
+  await User.findByIdAndUpdate(user._id, { password: hashedNewPassword });
+  // CONSUMING THE RESET PERMISSION TOKEN — PREVENTS REUSE AFTER SUCCESSFUL RESET
+  await SecurityCode.updateOne({ _id: resetCode._id }, { used: true });
+  // RETURNING SUCCESS RESPONSE — CLIENT SHOULD NAVIGATE TO LOGIN
+  res.status(200).json({
+    message:
+      "Password reset successfully! You can now log in with your new password.",
+    success: true,
+  });
+  // RETURNING FROM FUNCTION
+  return;
+});
+
+/**
+ * CANCEL FORGOT PASSWORD — CLEANS UP ALL FORGOT PASSWORD CODES FOR THE USER
+ * IDEMPOTENT — RETURNS SUCCESS EVEN IF NO CODES EXIST OR USER NOT FOUND
+ * @param {import("express").Request} req - Request Object
+ * @param {import("express").Response} res - Response Object
+ * @returns {Promise<void>}
+ */
+// <== CANCEL FORGOT PASSWORD ==>
+export const cancelForgotPassword = expressAsyncHandler(async (req, res) => {
+  // GETTING EMAIL FROM REQUEST BODY
+  const { email } = req.body;
+  // FINDING USER BY EMAIL — SILENTLY SKIP DELETION IF USER NOT FOUND
+  const user = await User.findOne({ email }).lean().exec();
+  // IF USER EXISTS — DELETE ALL THEIR FORGOT PASSWORD CODES
+  if (user) {
+    // DELETING BOTH OTP AND RESET PERMISSION CODES FOR THIS USER
+    await SecurityCode.deleteMany({
+      userId: user._id,
+      purpose: {
+        $in: [
+          SECURITY_CODE_PURPOSES.FORGOT_PASSWORD_OTP,
+          SECURITY_CODE_PURPOSES.FORGOT_PASSWORD_RESET,
+        ],
+      },
+    });
+  }
+  // RETURNING SUCCESS — IDEMPOTENT REGARDLESS OF WHETHER CODES EXISTED
+  res.status(200).json({
+    message: "Forgot password request cancelled.",
     success: true,
   });
   // RETURNING FROM FUNCTION

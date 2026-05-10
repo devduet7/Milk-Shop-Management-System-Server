@@ -133,3 +133,21 @@ export const emailChangeNewTemplate = ({ fullName, code }) =>
         </p>
     </div>`,
   });
+
+// <== FORGOT PASSWORD VERIFICATION TEMPLATE ==>
+export const forgotPasswordTemplate = ({ fullName, code }) =>
+  baseLayout({
+    title: "Security Code — Password Reset",
+    preheader: `Your password reset code is ${code}. Valid for 10 minutes.`,
+    bodyContent: `<h1 style="margin:0 0 10px;font-size:23px;font-weight:800;color:#0f172a;text-align:center;letter-spacing:-0.3px;">Password Reset Request</h1>
+      <p style="margin:0 0 6px;text-align:center;color:#64748b;font-size:15px;">Hi <strong style="color:#0f172a;">${fullName}</strong>,</p>
+      <p style="margin:0;text-align:center;color:#64748b;font-size:15px;line-height:1.7;">
+        We received a request to reset the password for your Milk Shop account.<br/>Use the code below to continue. If you did not request this, you can safely ignore this email.
+      </p>
+      ${otpBlock(code)}
+      <div style="background-color:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:14px 18px;text-align:center;">
+        <p style="margin:0;color:#c2410c;font-size:13px;line-height:1.6;">
+          <strong>⚠ Did not request this?</strong> Your account is safe — no changes will be made unless this code is entered.
+        </p>
+      </div>`,
+  });

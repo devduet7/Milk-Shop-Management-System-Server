@@ -132,3 +132,81 @@ export const validateCancelSecurityCode = [
   // HANDLING VALIDATION ERRORS
   handleValidationErrors,
 ];
+
+// <== INITIATE FORGOT PASSWORD VALIDATION ==>
+export const validateInitiateForgotPassword = [
+  // VALIDATING EMAIL FIELD
+  body("email")
+    .trim()
+    .notEmpty()
+    .withMessage("Email Address is Required!")
+    .isEmail()
+    .withMessage("Please Provide a Valid Email Address!")
+    .normalizeEmail(),
+  // HANDLING VALIDATION ERRORS
+  handleValidationErrors,
+];
+
+// <== VERIFY FORGOT PASSWORD OTP VALIDATION ==>
+export const validateVerifyForgotPasswordOtp = [
+  // VALIDATING EMAIL FIELD
+  body("email")
+    .trim()
+    .notEmpty()
+    .withMessage("Email Address is Required!")
+    .isEmail()
+    .withMessage("Please Provide a Valid Email Address!")
+    .normalizeEmail(),
+  // VALIDATING 6-DIGIT OTP CODE
+  body("code")
+    .notEmpty()
+    .withMessage("Verification Code is Required!")
+    .isLength({ min: 6, max: 6 })
+    .withMessage("Verification Code must be Exactly 6 Digits!")
+    .isNumeric()
+    .withMessage("Verification Code must Contain Only Digits!"),
+  // HANDLING VALIDATION ERRORS
+  handleValidationErrors,
+];
+
+// <== RESET FORGOT PASSWORD VALIDATION ==>
+export const validateResetForgotPassword = [
+  // VALIDATING EMAIL FIELD
+  body("email")
+    .trim()
+    .notEmpty()
+    .withMessage("Email Address is Required!")
+    .isEmail()
+    .withMessage("Please Provide a Valid Email Address!")
+    .normalizeEmail(),
+  // VALIDATING NEW PASSWORD FIELD WITH FULL STRENGTH REQUIREMENTS
+  body("newPassword")
+    .notEmpty()
+    .withMessage("New Password is Required!")
+    .isLength({ min: 8 })
+    .withMessage("Password must be at least 8 Characters Long!")
+    .matches(/[A-Z]/)
+    .withMessage("Password must Contain at least One Uppercase Letter!")
+    .matches(/[a-z]/)
+    .withMessage("Password must Contain at least One Lowercase Letter!")
+    .matches(/[0-9]/)
+    .withMessage("Password must Contain at least One Digit!")
+    .matches(/[^A-Za-z0-9]/)
+    .withMessage("Password must Contain at least One Special Character!"),
+  // HANDLING VALIDATION ERRORS
+  handleValidationErrors,
+];
+
+// <== CANCEL FORGOT PASSWORD VALIDATION ==>
+export const validateCancelForgotPassword = [
+  // VALIDATING EMAIL FIELD — NEEDED TO IDENTIFY WHICH USER'S CODES TO CLEAN UP
+  body("email")
+    .trim()
+    .notEmpty()
+    .withMessage("Email Address is Required!")
+    .isEmail()
+    .withMessage("Please Provide a Valid Email Address!")
+    .normalizeEmail(),
+  // HANDLING VALIDATION ERRORS
+  handleValidationErrors,
+];

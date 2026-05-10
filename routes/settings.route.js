@@ -5,10 +5,14 @@ import {
   validateUpdatePricing,
   validateUpdateFullName,
   validateCancelSecurityCode,
+  validateResetForgotPassword,
   validateInitiatePhoneChange,
   validateInitiateEmailChange,
   validateUpdateReportSettings,
+  validateCancelForgotPassword,
+  validateInitiateForgotPassword,
   validateInitiatePasswordChange,
+  validateVerifyForgotPasswordOtp,
 } from "../validators/settings.validator.js";
 import {
   getProfile,
@@ -19,11 +23,15 @@ import {
   updateFullName,
   verifyPhoneChange,
   cancelSecurityCode,
+  resetForgotPassword,
   initiatePhoneChange,
   initiateEmailChange,
   verifyPasswordChange,
+  cancelForgotPassword,
   updateReportSettings,
+  initiateForgotPassword,
   initiatePasswordChange,
+  verifyForgotPasswordOtp,
   verifyNewEmailForChange,
   verifyCurrentEmailForChange,
 } from "../controllers/settings.controller.js";
@@ -34,6 +42,31 @@ import isAuthenticated from "../middleware/isAuthenticated.js";
 
 // <== ROUTER ==>
 const router = express.Router();
+
+// INITIATE FORGOT PASSWORD
+router.post(
+  "/forgot-password/initiate",
+  validateInitiateForgotPassword,
+  initiateForgotPassword,
+);
+// VERIFY FORGOT PASSWORD OTP
+router.post(
+  "/forgot-password/verify",
+  validateVerifyForgotPasswordOtp,
+  verifyForgotPasswordOtp,
+);
+// RESET FORGOT PASSWORD
+router.post(
+  "/forgot-password/reset",
+  validateResetForgotPassword,
+  resetForgotPassword,
+);
+// CANCEL FORGOT PASSWORD
+router.post(
+  "/forgot-password/cancel",
+  validateCancelForgotPassword,
+  cancelForgotPassword,
+);
 
 // <== APPLYING AUTHENTICATION MIDDLEWARE TO ALL ROUTES ==>
 router.use(isAuthenticated);

@@ -11,6 +11,10 @@ export const SECURITY_CODE_PURPOSES = {
   PHONE_CHANGE: "phone_change",
   // <== SENT TO CURRENT EMAIL BEFORE APPLYING NEW PASSWORD ==>
   PASSWORD_CHANGE: "password_change",
+  // <== SENT TO CURRENT EMAIL FOR PASSWORD RESET ==>
+  FORGOT_PASSWORD_OTP: "forgot_password_otp",
+  // <== SENT TO CURRENT EMAIL FOR PASSWORD RESET ==>
+  FORGOT_PASSWORD_RESET: "forgot_password_reset",
 };
 
 // <== SECURITY CODE SCHEMA ==>
