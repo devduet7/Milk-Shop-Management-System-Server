@@ -22,6 +22,7 @@ import analyticsRoutes from "./routes/analytics.route.js";
 import quickSaleRoutes from "./routes/quickSale.route.js";
 import dashboardRoutes from "./routes/dashboard.route.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { initializeCronJobs } from "./services/cronJobs.js";
 import expenditureRoutes from "./routes/expenditure.route.js";
 import helmetMiddleware from "./middleware/helmetMiddleware.js";
 
@@ -108,6 +109,8 @@ mongoose.connection.once("open", () => {
   server.listen(PORT, () => {
     // LOGGING SERVER CONNECTION
     console.log(`Server is running on port ${PORT}`);
+    // INITIALIZING CRON JOBS
+    initializeCronJobs();
   });
 });
 
