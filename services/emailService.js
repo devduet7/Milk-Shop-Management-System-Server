@@ -6,6 +6,10 @@ import {
   forgotPasswordTemplate,
   emailChangeCurrentTemplate,
 } from "./emailTemplates.js";
+import {
+  dailyReportTemplate,
+  monthlyReportTemplate,
+} from "./reportEmailTemplates.js";
 
 // <== BREVO TRANSACTIONAL EMAIL API URL ==>
 const BREVO_API_URL = "https://api.brevo.com/v3/smtp/email";
@@ -114,5 +118,33 @@ export const sendForgotPasswordOtp = async ({ to, fullName, code }) => {
     toName: fullName,
     subject: "Security Code — Password Reset Request",
     htmlContent: forgotPasswordTemplate({ fullName, code }),
+  });
+};
+
+/**
+ * SEND DAILY BUSINESS REPORT TO THE USER'S REGISTERED EMAIL
+ */
+// <== SEND DAILY REPORT ==>
+export const sendDailyReport = async ({ to, fullName, data, date }) => {
+  // SENDING DAILY BUSINESS REPORT EMAIL
+  await sendEmail({
+    to,
+    toName: fullName,
+    subject: `Daily Report — ${date}`,
+    htmlContent: dailyReportTemplate({ fullName, date, data }),
+  });
+};
+
+/**
+ * SEND COMPREHENSIVE MONTHLY BUSINESS REPORT TO THE USER'S REGISTERED EMAIL
+ */
+// <== SEND MONTHLY REPORT ==>
+export const sendMonthlyReport = async ({ to, fullName, data, month }) => {
+  // SENDING MONTHLY BUSINESS REPORT EMAIL
+  await sendEmail({
+    to,
+    toName: fullName,
+    subject: `Monthly Report — ${month}`,
+    htmlContent: monthlyReportTemplate({ fullName, month, data }),
   });
 };
