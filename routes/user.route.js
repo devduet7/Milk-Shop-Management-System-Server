@@ -1,15 +1,7 @@
 // <== IMPORTS ==>
-import {
-  validateRegister,
-  validateLogin,
-} from "../validators/user.validator.js";
-import {
-  register,
-  login,
-  logout,
-  refreshToken,
-} from "../controllers/user.controller.js";
 import express from "express";
+import { validateLogin } from "../validators/user.validator.js";
+import { login, logout, refreshToken } from "../controllers/user.controller.js";
 
 // <== ROUTER ==>
 const router = express.Router();
@@ -21,8 +13,6 @@ router.post("/logout", logout);
 router.post("/refresh", refreshToken);
 // USER LOGIN ROUTE
 router.post("/login", validateLogin, login);
-// USER REGISTER ROUTE
-router.post("/register", validateRegister, register);
 
 // <== EXPORTING ROUTER ==>
 export default router;

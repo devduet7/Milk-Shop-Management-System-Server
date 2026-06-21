@@ -3,6 +3,8 @@ import jwt from "jsonwebtoken";
 
 /**
  * AUTHENTICATION MIDDLEWARE
+ * VERIFIES THE ACCESS TOKEN AND ATTACHES THE EMBEDDED IDENTITY/ROLE/PERMISSION CLAIMS TO THE REQUEST
+ * DOES NOT HIT THE DATABASE — ROLE AND PERMISSION CHANGES TAKE EFFECT ON THE NEXT TOKEN REFRESH
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @param {import("express").NextFunction} next - Next Function
@@ -50,7 +52,12 @@ const isAuthenticated = (req, res, next) => {
     return;
   }
   // VALIDATING DECODED TOKEN PAYLOAD
-  if (!decodedToken || !decodedToken.userId) {
+  if (
+    !decodedToken ||
+    !decodedToken.userId ||
+    !decodedToken.accountId ||
+    !decodedToken.role
+  ) {
     // RETURNING UNAUTHORIZED RESPONSE
     res.status(401).json({
       message: "Unauthorized to Perform Action!",
@@ -60,8 +67,14 @@ const isAuthenticated = (req, res, next) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // ATTACHING USER ID TO REQUEST OBJECT FOR USE IN DOWNSTREAM CONTROLLERS
+  // ATTACHING USER ID TO REQUEST OBJECT — UNCHANGED FOR BACKWARD COMPATIBILITY WITH EXISTING CONTROLLERS
   req.id = decodedToken.userId;
+  // ATTACHING ACCOUNT ID TO REQUEST OBJECT — THE TENANT THIS REQUEST IS SCOPED TO
+  req.accountId = decodedToken.accountId;
+  // ATTACHING ROLE TO REQUEST OBJECT
+  req.role = decodedToken.role;
+  // ATTACHING PERMISSIONS MATRIX TO REQUEST OBJECT (NULL FOR SUPERADMIN/ADMIN — THEY ARE UNRESTRICTED)
+  req.permissions = decodedToken.permissions || null;
   // CALLING NEXT MIDDLEWARE
   next();
 };

@@ -1,9 +1,88 @@
 // <== IMPORTS ==>
 import mongoose from "mongoose";
 
+// <== USER ROLE CONSTANTS ==>
+export const USER_ROLES = {
+  // <== ROOT OWNER OF AN ACCOUNT — FULL UNRESTRICTED ACCESS ==>
+  SUPERADMIN: "superadmin",
+  // <== SAME ACCESS AS SUPERADMIN EXCEPT CANNOT MANAGE ADMINS OR DELETE THE SUPERADMIN ==>
+  ADMIN: "admin",
+  // <== RESTRICTED ACCESS GOVERNED BY THE PER-MODULE PERMISSIONS MATRIX ==>
+  USER: "user",
+};
+
+// <== PERMISSION LEVEL CONSTANTS (ORDINAL — EACH LEVEL IMPLIES EVERYTHING BELOW IT) ==>
+export const PERMISSION_LEVELS = {
+  NONE: "none",
+  READ: "read",
+  WRITE: "write",
+  UPDATE: "update",
+};
+
+// <== SHARED PERMISSION LEVEL FIELD CONFIG (REUSED ACROSS ALL MODULE FIELDS BELOW) ==>
+const permissionLevelField = {
+  type: String,
+  enum: Object.values(PERMISSION_LEVELS),
+  default: PERMISSION_LEVELS.NONE,
+};
+
+// <== MODULE PERMISSIONS SUB-SCHEMA ==>
+const modulePermissionsSchema = new mongoose.Schema(
+  {
+    sales: permissionLevelField,
+    purchases: permissionLevelField,
+    customers: permissionLevelField,
+    expenditures: permissionLevelField,
+    recoveries: permissionLevelField,
+    quickSales: permissionLevelField,
+    dashboard: permissionLevelField,
+    analytics: permissionLevelField,
+  },
+  { _id: false },
+);
+
 // <== USER SCHEMA ==>
 const userSchema = new mongoose.Schema(
   {
+    // ACCOUNT REFERENCE FIELD — THE TENANT THIS USER BELONGS TO
+    accountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Account",
+      required: true,
+      index: true,
+    },
+    // ROLE FIELD — DETERMINES ACCESS TIER
+    role: {
+      type: String,
+      enum: Object.values(USER_ROLES),
+      required: true,
+    },
+    // MODULE PERMISSIONS FIELD — ONLY APPLICABLE FOR USERS WITH ROLE 'USER', IGNORED FOR ADMINS AND SUPERADMINS
+    permissions: {
+      type: modulePermissionsSchema,
+      default: undefined,
+    },
+    // CREATED BY FIELD — THE SUPERADMIN/ADMIN WHO CREATED THIS USER (NULL FOR THE ROOT SUPERADMIN)
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    // ACTIVE STATUS FIELD — DEACTIVATED USERS CANNOT LOGIN OR REFRESH THEIR SESSION
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    // TOKEN VERSION FIELD — INCREMENTING THIS IMMEDIATELY INVALIDATES ALL OUTSTANDING REFRESH TOKENS
+    tokenVersion: {
+      type: Number,
+      default: 0,
+    },
+    // HAS SET PASSWORD FIELD — FALSE FOR INVITED USERS UNTIL THEY COMPLETE ACCOUNT SETUP
+    hasSetPassword: {
+      type: Boolean,
+      default: true,
+    },
     // FULL NAME FIELD
     fullName: {
       type: String,
@@ -112,6 +191,11 @@ userSchema.index({ email: 1, fullName: 1 });
  */
 // <== INDEX FOR PHONE NUMBER ==>
 userSchema.index({ phoneNumber: 1 }, { sparse: true });
+/**
+ * COMPOUND INDEX FOR LISTING USERS UNDER AN ACCOUNT BY ROLE
+ */
+// <== COMPOUND INDEX FOR ACCOUNT AND ROLE LOOKUPS ==>
+userSchema.index({ accountId: 1, role: 1 });
 
 // <== EXPORTING THE USER MODEL ==>
 export const User = mongoose.model("User", userSchema);
