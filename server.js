@@ -77,8 +77,16 @@ app.use("/api/v1/expenditures", expenditureRoutes);
 
 // <== HEALTH CHECK ROUTE ==>
 app.get("/health", (_req, res) => {
-  // HEALTH CHECK RESPONSE
-  res.status(200).json({ status: "Server is Healthy and Running 🤍" });
+  // CHECKING THE DATABASE CONNECTION STATE
+  const dbState = mongoose.connection.readyState;
+  // IF DATABASE IS CONNECTED
+  if (dbState === 1) {
+    // RESPONDING WITH HEALTHY STATUS
+    res.status(200).json({ status: "Server is Healthy and Running 🤍" });
+  } else {
+    // RESPONDING WITH UNHEALTHY STATUS
+    res.status(503).json({ status: "Database Unavailable", dbState });
+  }
 });
 
 // <== MIDDLEWARE 404 RESPONSE ==>
