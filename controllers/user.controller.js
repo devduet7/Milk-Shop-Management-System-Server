@@ -39,167 +39,6 @@ const setAuthCookies = (res, accessToken, refreshToken) => {
 };
 
 /**
- * USER REGISTER
- * @param {import("express").Request} req - Request Object
- * @param {import("express").Response} res - Response Object
- * @returns {Promise<void>}
- */
-// <== USER REGISTER ==>
-export const register = expressAsyncHandler(async (req, res) => {
-  // GETTING USER DATA FROM REQUEST BODY
-  const { fullName, email, password, phoneNumber } = req.body;
-  // VALIDATING REQUIRED FIELDS
-  if (!fullName || !email || !password) {
-    // RETURNING ERROR RESPONSE
-    res.status(400).json({
-      message: "Full Name, Email, and Password are Required!",
-      success: false,
-    });
-    // RETURNING FROM FUNCTION
-    return;
-  }
-  // VALIDATING EMAIL FORMAT
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  // IF EMAIL FORMAT IS INVALID, RETURN 400 ERROR
-  if (!emailRegex.test(email)) {
-    // RETURNING ERROR RESPONSE
-    res.status(400).json({
-      message: "Please Provide a Valid Email Address!",
-      success: false,
-    });
-    // RETURNING FROM FUNCTION
-    return;
-  }
-  // VALIDATING PASSWORD LENGTH (MINIMUM 8 CHARACTERS)
-  if (password.length < 8) {
-    // RETURNING ERROR RESPONSE
-    res.status(400).json({
-      message: "Password must be at least 8 Characters Long!",
-      success: false,
-    });
-    // RETURNING FROM FUNCTION
-    return;
-  }
-  // CHECKING FOR UPPERCASE LETTER IN PASSWORD
-  if (!/[A-Z]/.test(password)) {
-    // RETURNING ERROR RESPONSE
-    res.status(400).json({
-      message: "Password must Contain at least one Uppercase Letter!",
-      success: false,
-    });
-    // RETURNING FROM FUNCTION
-    return;
-  }
-  // CHECKING FOR LOWERCASE LETTER IN PASSWORD
-  if (!/[a-z]/.test(password)) {
-    // RETURNING ERROR RESPONSE
-    res.status(400).json({
-      message: "Password must Contain at least One Lowercase Letter!",
-      success: false,
-    });
-    // RETURNING FROM FUNCTION
-    return;
-  }
-  // CHECKING FOR DIGIT IN PASSWORD
-  if (!/[0-9]/.test(password)) {
-    // RETURNING ERROR RESPONSE
-    res.status(400).json({
-      message: "Password must Contain at least One Digit!",
-      success: false,
-    });
-    // RETURNING FROM FUNCTION
-    return;
-  }
-  // CHECKING FOR SPECIAL CHARACTER IN PASSWORD
-  if (!/[^A-Za-z0-9]/.test(password)) {
-    // RETURNING ERROR RESPONSE
-    res.status(400).json({
-      message: "Password must Contain at least One Special Character!",
-      success: false,
-    });
-    // RETURNING FROM FUNCTION
-    return;
-  }
-  // VALIDATING PHONE NUMBER FORMAT IF PROVIDED
-  let formattedPhoneNumber = null;
-  // IF PHONE NUMBER IS PROVIDED, VALIDATE AND FORMAT IT
-  if (phoneNumber) {
-    // TRIMMING PHONE NUMBER
-    const trimmedPhone = phoneNumber.trim();
-    // E.164 FORMAT REGEX VALIDATION
-    const phoneRegex = /^\+[1-9]\d{1,14}$/;
-    // IF PHONE NUMBER FORMAT IS INVALID, RETURN 400 ERROR
-    if (!phoneRegex.test(trimmedPhone)) {
-      // RETURNING ERROR RESPONSE
-      res.status(400).json({
-        message:
-          "Please Provide a Valid Phone Number with Country Code (e.g., +1234567890)!",
-        success: false,
-      });
-      // RETURNING FROM FUNCTION
-      return;
-    }
-    // SETTING FORMATTED PHONE NUMBER
-    formattedPhoneNumber = trimmedPhone;
-    // CHECKING IF PHONE NUMBER IS ALREADY IN USE
-    const existingPhoneUser = await User.findOne({
-      phoneNumber: formattedPhoneNumber,
-    })
-      .lean()
-      .exec();
-    // IF PHONE NUMBER ALREADY EXISTS, RETURN 409 ERROR
-    if (existingPhoneUser) {
-      // RETURNING ERROR RESPONSE
-      res.status(409).json({
-        message: "A User with this Phone Number Already Exists!",
-        success: false,
-      });
-      // RETURNING FROM FUNCTION
-      return;
-    }
-  }
-  // CHECKING IF A USER WITH THIS EMAIL ALREADY EXISTS
-  const existingUser = await User.findOne({ email }).lean().exec();
-  // IF USER ALREADY EXISTS, RETURN 409 ERROR
-  if (existingUser) {
-    // RETURNING ERROR RESPONSE
-    res.status(409).json({
-      message: "A User with this Email Already Exists!",
-      success: false,
-    });
-    // RETURNING FROM FUNCTION
-    return;
-  }
-  // HASHING USER PASSWORD WITH BCRYPT
-  const hashedPassword = await bcrypt.hash(password, 10);
-  // CREATING NEW USER IN DATABASE
-  const newUser = await User.create({
-    fullName,
-    email,
-    password: hashedPassword,
-    phoneNumber: formattedPhoneNumber,
-  });
-  // GENERATING ACCESS TOKEN FOR NEW USER
-  const accessToken = generateAccessToken(newUser._id.toString());
-  // GENERATING REFRESH TOKEN FOR NEW USER
-  const refreshToken = generateRefreshToken(newUser._id.toString());
-  // SETTING AUTH COOKIES ON RESPONSE
-  setAuthCookies(res, accessToken, refreshToken);
-  // RETURNING SUCCESS RESPONSE WITH SAFE USER DATA
-  res.status(201).json({
-    message: "Account Created Successfully!",
-    success: true,
-    data: {
-      id: newUser._id,
-      fullName: newUser.fullName,
-      email: newUser.email,
-      phoneNumber: newUser.phoneNumber,
-    },
-  });
-  return;
-});
-
-/**
  * USER LOGIN
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
@@ -255,10 +94,41 @@ export const login = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // GENERATING ACCESS TOKEN FOR USER
-  const accessToken = generateAccessToken(user._id.toString());
-  // GENERATING REFRESH TOKEN FOR USER
-  const refreshToken = generateRefreshToken(user._id.toString());
+  // CHECKING IF THE USER ACCOUNT HAS BEEN DEACTIVATED
+  if (!user.isActive) {
+    // RETURNING FORBIDDEN RESPONSE
+    res.status(403).json({
+      message:
+        "Your Account has been Deactivated. Please Contact your Administrator!",
+      success: false,
+      code: "ACCOUNT_DEACTIVATED",
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // CHECKING IF THE USER HAS COMPLETED ACCOUNT SETUP
+  if (!user.hasSetPassword) {
+    // RETURNING FORBIDDEN RESPONSE
+    res.status(403).json({
+      message: "Please Complete your Account Setup before Logging In!",
+      success: false,
+      code: "ACCOUNT_SETUP_INCOMPLETE",
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // GENERATING ACCESS TOKEN WITH USER IDENTITY, ACCOUNT, ROLE, AND PERMISSIONS
+  const accessToken = generateAccessToken({
+    userId: user._id.toString(),
+    accountId: user.accountId.toString(),
+    role: user.role,
+    permissions: user.permissions || null,
+  });
+  // GENERATING REFRESH TOKEN WITH USER IDENTITY AND CURRENT TOKEN VERSION
+  const refreshToken = generateRefreshToken({
+    userId: user._id.toString(),
+    tokenVersion: user.tokenVersion,
+  });
   // SETTING AUTH COOKIES ON RESPONSE
   setAuthCookies(res, accessToken, refreshToken);
   // RETURNING SUCCESS RESPONSE WITH SAFE USER DATA
@@ -267,6 +137,9 @@ export const login = expressAsyncHandler(async (req, res) => {
     success: true,
     data: {
       id: user._id,
+      accountId: user.accountId,
+      role: user.role,
+      permissions: user.permissions || null,
       fullName: user.fullName,
       email: user.email,
       phoneNumber: user.phoneNumber,
@@ -277,6 +150,8 @@ export const login = expressAsyncHandler(async (req, res) => {
 
 /**
  * REFRESH ACCESS TOKEN
+ * RE-FETCHES THE USER ON EVERY CALL — THIS IS THE ENFORCEMENT POINT FOR DEACTIVATION, ROLE CHANGES,
+ * AND PERMISSION UPDATES TAKING EFFECT WITHOUT REQUIRING THE USER TO LOG OUT AND BACK IN AGAIN
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
@@ -346,10 +221,41 @@ export const refreshToken = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // GENERATING NEW ACCESS TOKEN
-  const newAccessToken = generateAccessToken(user._id.toString());
-  // GENERATING NEW REFRESH TOKEN
-  const newRefreshToken = generateRefreshToken(user._id.toString());
+  // CHECKING IF THE TOKEN VERSION MATCHES — A MISMATCH MEANS THIS SESSION WAS FORCIBLY REVOKED BY AN ADMIN
+  if (decodedToken.tokenVersion !== user.tokenVersion) {
+    // RETURNING ERROR RESPONSE
+    res.status(401).json({
+      message: "Session has been Revoked! Please LogIn Again.",
+      success: false,
+      code: "SESSION_REVOKED",
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // CHECKING IF THE USER ACCOUNT HAS BEEN DEACTIVATED SINCE THE LAST REFRESH
+  if (!user.isActive) {
+    // RETURNING ERROR RESPONSE
+    res.status(403).json({
+      message:
+        "Your Account has been Deactivated. Please Contact your Administrator!",
+      success: false,
+      code: "ACCOUNT_DEACTIVATED",
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // GENERATING NEW ACCESS TOKEN WITH FRESH ACCOUNT, ROLE, AND PERMISSIONS (PICKS UP ANY CHANGES SINCE LAST TOKEN)
+  const newAccessToken = generateAccessToken({
+    userId: user._id.toString(),
+    accountId: user.accountId.toString(),
+    role: user.role,
+    permissions: user.permissions || null,
+  });
+  // GENERATING NEW REFRESH TOKEN WITH CURRENT TOKEN VERSION
+  const newRefreshToken = generateRefreshToken({
+    userId: user._id.toString(),
+    tokenVersion: user.tokenVersion,
+  });
   // SETTING NEW AUTH COOKIES ON RESPONSE
   setAuthCookies(res, newAccessToken, newRefreshToken);
   // RETURNING SUCCESS RESPONSE
