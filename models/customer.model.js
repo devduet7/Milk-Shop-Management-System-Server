@@ -4,12 +4,18 @@ import mongoose from "mongoose";
 // <== CUSTOMER SCHEMA ==>
 const customerSchema = new mongoose.Schema(
   {
-    // USER ID FIELD (OWNER OF THIS CUSTOMER RECORD)
-    userId: {
+    // ACCOUNT ID FIELD (TENANT THIS CUSTOMER RECORD BELONGS TO — SHARED ACROSS THE WHOLE TEAM)
+    accountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Account",
+      required: true,
+      index: true,
+    },
+    // PERFORMED BY FIELD (THE USER WHO CREATED THIS RECORD — FOR ATTRIBUTION, NOT OWNERSHIP)
+    performedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
     },
     // NAME FIELD
     name: {
@@ -53,15 +59,15 @@ const customerSchema = new mongoose.Schema(
 // <== TEXT INDEX FOR SEARCH FUNCTIONALITY ==>
 customerSchema.index({ name: "text", phone: "text", address: "text" });
 /**
- * COMPOUND INDEX FOR USER AND NAME QUERIES
+ * COMPOUND INDEX FOR ACCOUNT AND NAME QUERIES
  */
-// <== COMPOUND INDEX FOR USER AND NAME QUERIES ==>
-customerSchema.index({ userId: 1, name: 1 });
+// <== COMPOUND INDEX FOR ACCOUNT AND NAME QUERIES ==>
+customerSchema.index({ accountId: 1, name: 1 });
 /**
- * COMPOUND INDEX FOR USER AND CREATION DATE SORTING
+ * COMPOUND INDEX FOR ACCOUNT AND CREATION DATE SORTING
  */
-// <== COMPOUND INDEX FOR USER AND CREATION DATE SORTING ==>
-customerSchema.index({ userId: 1, createdAt: -1 });
+// <== COMPOUND INDEX FOR ACCOUNT AND CREATION DATE SORTING ==>
+customerSchema.index({ accountId: 1, createdAt: -1 });
 
 // <== EXPORTING THE CUSTOMER MODEL ==>
 export const Customer = mongoose.model("Customer", customerSchema);
