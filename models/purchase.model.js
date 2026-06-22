@@ -4,12 +4,18 @@ import mongoose from "mongoose";
 // <== PURCHASE SCHEMA ==>
 const purchaseSchema = new mongoose.Schema(
   {
-    // USER ID FIELD (OWNER OF THIS PURCHASE RECORD)
-    userId: {
+    // ACCOUNT ID FIELD (TENANT THIS PURCHASE RECORD BELONGS TO — SHARED ACROSS THE WHOLE TEAM)
+    accountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Account",
+      required: true,
+      index: true,
+    },
+    // PERFORMED BY FIELD (THE USER WHO CREATED THIS RECORD — FOR ATTRIBUTION, NOT OWNERSHIP)
+    performedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
     },
     // SUPPLIER NAME FIELD
     supplier: {
@@ -56,25 +62,25 @@ const purchaseSchema = new mongoose.Schema(
 
 // <== INDEXES ==>
 /**
- * COMPOUND INDEX FOR USER AND DATE SORTING (PRIMARY QUERY PATTERN)
+ * COMPOUND INDEX FOR ACCOUNT AND DATE SORTING (PRIMARY QUERY PATTERN)
  */
-// <== COMPOUND INDEX FOR USER AND DATE ==>
-purchaseSchema.index({ userId: 1, date: -1 });
+// <== COMPOUND INDEX FOR ACCOUNT AND DATE ==>
+purchaseSchema.index({ accountId: 1, date: -1 });
 /**
- * COMPOUND INDEX FOR USER AND SUPPLIER (SUPPLIER SEARCH PATTERN)
+ * COMPOUND INDEX FOR ACCOUNT AND SUPPLIER (SUPPLIER SEARCH PATTERN)
  */
-// <== COMPOUND INDEX FOR USER AND SUPPLIER ==>
-purchaseSchema.index({ userId: 1, supplier: 1 });
+// <== COMPOUND INDEX FOR ACCOUNT AND SUPPLIER ==>
+purchaseSchema.index({ accountId: 1, supplier: 1 });
 /**
- * COMPOUND INDEX FOR COMBINATION FILTER (USER + DATE RANGE + SUPPLIER)
+ * COMPOUND INDEX FOR COMBINATION FILTER (ACCOUNT + DATE RANGE + SUPPLIER)
  */
 // <== COMPOUND INDEX FOR COMBINATION FILTER ==>
-purchaseSchema.index({ userId: 1, date: -1, supplier: 1 });
+purchaseSchema.index({ accountId: 1, date: -1, supplier: 1 });
 /**
- * COMPOUND INDEX FOR USER AND CREATION DATE SORTING
+ * COMPOUND INDEX FOR ACCOUNT AND CREATION DATE SORTING
  */
-// <== COMPOUND INDEX FOR USER AND CREATION DATE ==>
-purchaseSchema.index({ userId: 1, createdAt: -1 });
+// <== COMPOUND INDEX FOR ACCOUNT AND CREATION DATE ==>
+purchaseSchema.index({ accountId: 1, createdAt: -1 });
 
 // <== EXPORTING THE PURCHASE MODEL ==>
 export const Purchase = mongoose.model("Purchase", purchaseSchema);
