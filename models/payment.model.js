@@ -11,12 +11,18 @@ const paymentSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    // USER ID FIELD
-    userId: {
+    // ACCOUNT ID FIELD (TENANT THIS PAYMENT BELONGS TO — ENABLES ACCOUNT-SCOPED QUERIES WITHOUT CUSTOMER LOOKUP)
+    accountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Account",
+      required: true,
+      index: true,
+    },
+    // PERFORMED BY FIELD (THE USER WHO RECORDED THIS PAYMENT — FOR ATTRIBUTION)
+    performedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
     },
     // AMOUNT FIELD (IN RUPEES)
     amount: {
@@ -58,10 +64,10 @@ const paymentSchema = new mongoose.Schema(
 // <== COMPOUND INDEX FOR CUSTOMER BILLING MONTH PAYMENT QUERIES ==>
 paymentSchema.index({ customerId: 1, billingMonth: 1 });
 /**
- * COMPOUND INDEX FOR USER-LEVEL PAYMENT QUERIES
+ * COMPOUND INDEX FOR ACCOUNT-LEVEL PAYMENT QUERIES
  */
-// <== COMPOUND INDEX FOR USER-LEVEL PAYMENT QUERIES ==>
-paymentSchema.index({ userId: 1, billingMonth: 1 });
+// <== COMPOUND INDEX FOR ACCOUNT-LEVEL PAYMENT QUERIES ==>
+paymentSchema.index({ accountId: 1, billingMonth: 1 });
 
 // <== EXPORTING THE PAYMENT MODEL ==>
 export const Payment = mongoose.model("Payment", paymentSchema);
