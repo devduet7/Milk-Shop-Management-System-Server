@@ -66,11 +66,11 @@ const getDateRangeForFilter = (filter, monthStr) => {
 };
 
 // <== HELPER: BUILD PURCHASE MATCH QUERY ==>
-const buildMatchQuery = (userId, startDate, endDate, search) => {
-  // BASE QUERY WITH USER ID AND DATE RANGE
+const buildMatchQuery = (accountId, startDate, endDate, search) => {
+  // BASE QUERY WITH ACCOUNT ID AND DATE RANGE
   const matchQuery = {
-    // CONVERTING USER ID TO OBJECT ID
-    userId: new mongoose.Types.ObjectId(userId),
+    // CONVERTING ACCOUNT ID TO OBJECT ID
+    accountId: new mongoose.Types.ObjectId(accountId),
     // APPLYING DATE RANGE
     date: { $gte: startDate, $lte: endDate },
   };
@@ -124,9 +124,9 @@ const buildStats = (facetResult) => {
  */
 // <== GET PURCHASES ==>
 export const getPurchases = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
-  // GETTING FILTER TYPE FROM QUERY (today | week | month) — DEFAULTS TO MONTH
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING FILTER TYPE FROM QUERY (TODAY | WEEK | MONTH) — DEFAULTS TO MONTH
   const filter = req.query.filter || "month";
   // GETTING MONTH STRING FOR MONTH FILTER (DEFAULTS TO CURRENT MONTH)
   const monthStr = req.query.month || getCurrentMonthStr();
@@ -141,7 +141,7 @@ export const getPurchases = expressAsyncHandler(async (req, res) => {
   // GETTING DATE RANGE FOR SELECTED FILTER
   const { startDate, endDate } = getDateRangeForFilter(filter, monthStr);
   // BUILDING BASE MATCH QUERY
-  const matchQuery = buildMatchQuery(userId, startDate, endDate, search);
+  const matchQuery = buildMatchQuery(accountId, startDate, endDate, search);
   // RUNNING STATS AGGREGATION AND PAGINATED RECORDS FETCH IN PARALLEL
   const [statsAggregation, records, totalCount] = await Promise.all([
     // AGGREGATION: STATS FOR THE SELECTED PERIOD (NOT PAGINATED — ALWAYS FULL TOTALS)
@@ -227,21 +227,38 @@ export const getPurchases = expressAsyncHandler(async (req, res) => {
  */
 // <== ADD PURCHASE ==>
 export const addPurchase = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING PURCHASE DATA FROM REQUEST BODY
   const { supplier, milkQuantity, totalCost, date, note } = req.body;
   // PARSING MILK QUANTITY AS FLOAT
   const parsedMilk = parseFloat(milkQuantity);
   // PARSING TOTAL COST AS FLOAT
   const parsedCost = parseFloat(totalCost);
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES BEFORE DIVIDING
+  if (
+    !Number.isFinite(parsedMilk) ||
+    !Number.isFinite(parsedCost) ||
+    parsedMilk <= 0
+  ) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Milk Quantity and Total Cost must be Valid Positive Numbers!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
   // COMPUTING PRICE PER LITER FROM COST AND QUANTITY
   const pricePerLiter = parseFloat((parsedCost / parsedMilk).toFixed(4));
   // RESOLVING DATE (DEFAULT TO TODAY IF NOT PROVIDED)
   const resolvedDate = date?.trim() || getTodayDateStr();
   // CREATING NEW PURCHASE RECORD IN DATABASE
   const purchase = await Purchase.create({
-    userId,
+    accountId,
+    performedBy,
     supplier: supplier.trim(),
     milkQuantity: parsedMilk,
     totalCost: parsedCost,
@@ -267,15 +284,15 @@ export const addPurchase = expressAsyncHandler(async (req, res) => {
  */
 // <== UPDATE PURCHASE ==>
 export const updatePurchase = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING PURCHASE ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING UPDATE DATA FROM REQUEST BODY
   const { supplier, milkQuantity, totalCost, date, note } = req.body;
-  // FINDING PURCHASE AND VERIFYING OWNERSHIP
-  const purchase = await Purchase.findOne({ _id: id, userId }).exec();
-  // IF PURCHASE NOT FOUND OR DOES NOT BELONG TO THIS USER
+  // FINDING PURCHASE AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const purchase = await Purchase.findOne({ _id: id, accountId }).exec();
+  // IF PURCHASE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!purchase) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({
@@ -294,6 +311,20 @@ export const updatePurchase = expressAsyncHandler(async (req, res) => {
   if (totalCost !== undefined) purchase.totalCost = parseFloat(totalCost);
   // RECOMPUTING PRICE PER LITER WHENEVER COST OR QUANTITY CHANGES
   if (milkQuantity !== undefined || totalCost !== undefined) {
+    // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES BEFORE DIVIDING
+    if (
+      !Number.isFinite(purchase.milkQuantity) ||
+      !Number.isFinite(purchase.totalCost) ||
+      purchase.milkQuantity <= 0
+    ) {
+      // RETURNING ERROR RESPONSE
+      res.status(400).json({
+        message: "Milk Quantity and Total Cost must be Valid Positive Numbers!",
+        success: false,
+      });
+      // RETURNING FROM FUNCTION
+      return;
+    }
     // RECOMPUTE USING FINAL VALUES AFTER UPDATES ABOVE
     purchase.pricePerLiter = parseFloat(
       (purchase.totalCost / purchase.milkQuantity).toFixed(4),
@@ -323,13 +354,15 @@ export const updatePurchase = expressAsyncHandler(async (req, res) => {
  */
 // <== DELETE PURCHASE ==>
 export const deletePurchase = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING PURCHASE ID FROM REQUEST PARAMS
   const { id } = req.params;
-  // FINDING PURCHASE AND VERIFYING OWNERSHIP BEFORE DELETION
-  const purchase = await Purchase.findOne({ _id: id, userId }).lean().exec();
-  // IF PURCHASE NOT FOUND OR DOES NOT BELONG TO THIS USER
+  // FINDING AND DELETING IN A SINGLE ATOMIC ROUND TRIP
+  const purchase = await Purchase.findOneAndDelete({ _id: id, accountId })
+    .lean()
+    .exec();
+  // IF PURCHASE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!purchase) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({
@@ -339,8 +372,6 @@ export const deletePurchase = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // DELETING PURCHASE RECORD FROM DATABASE
-  await Purchase.deleteOne({ _id: id });
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
     message: "Purchase Deleted Successfully!",
