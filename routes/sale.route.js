@@ -13,6 +13,7 @@ import {
 } from "../controllers/sale.controller.js";
 import express from "express";
 import isAuthenticated from "../middleware/isAuthenticated.js";
+import { requireRole, requirePermission } from "../middleware/authorize.js";
 
 // <== ROUTER ==>
 const router = express.Router();
@@ -22,13 +23,23 @@ router.use(isAuthenticated);
 
 // <== ROUTES ==>
 // ADD A NEW SALE (CUSTOMER OR SHOP)
-router.post("/", validateAddSale, addSale);
+router.post("/", requirePermission("sales", "write"), validateAddSale, addSale);
 // GET SALES WITH FILTERS, PAGINATION, AND COMBINED STATS
-router.get("/", validateGetSales, getSales);
+router.get("/", requirePermission("sales", "read"), validateGetSales, getSales);
 // UPDATE AN EXISTING SALE
-router.put("/:id", validateUpdateSale, updateSale);
-// DELETE A SALE
-router.delete("/:id", validateDeleteSale, deleteSale);
+router.put(
+  "/:id",
+  requirePermission("sales", "update"),
+  validateUpdateSale,
+  updateSale,
+);
+// DELETE A SALE — ADMIN AND ABOVE ONLY, NEVER DELEGABLE VIA THE PERMISSION MATRIX
+router.delete(
+  "/:id",
+  requireRole("superadmin", "admin"),
+  validateDeleteSale,
+  deleteSale,
+);
 
 // <== EXPORTING ROUTER ==>
 export default router;
