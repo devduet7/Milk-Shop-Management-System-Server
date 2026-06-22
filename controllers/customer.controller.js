@@ -82,8 +82,8 @@ const computeMonthlyStats = (
  */
 // <== GET ALL CUSTOMERS ==>
 export const getCustomers = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING MONTH FROM QUERY OR DEFAULTING TO CURRENT MONTH
   const monthStr = req.query.month || getCurrentMonthStr();
   // GETTING SEARCH QUERY FROM REQUEST
@@ -92,8 +92,8 @@ export const getCustomers = expressAsyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   // PARSING LIMIT PER PAGE (DEFAULT 10, CLAMPED BETWEEN 1 AND 100)
   const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 10));
-  // BUILDING BASE CUSTOMER QUERY FOR THIS USER
-  const customerQuery = { userId };
+  // BUILDING BASE CUSTOMER QUERY FOR THIS ACCOUNT
+  const customerQuery = { accountId };
   // APPLYING SEARCH FILTER IF PROVIDED
   if (search) {
     // FILTERING BY NAME OR PHONE USING CASE-INSENSITIVE REGEX
@@ -104,7 +104,7 @@ export const getCustomers = expressAsyncHandler(async (req, res) => {
       { phone: { $regex: search, $options: "i" } },
     ];
   }
-  // FETCHING ALL MATCHING CUSTOMERS FOR SUMMARY COMPUTATION (NO PAGINATION HERE)
+  // FETCHING ALL MATCHING CUSTOMERS — REQUIRED IN FULL FOR ACCURATE CROSS-CUSTOMER SUMMARY STATS
   const customers = await Customer.find(customerQuery)
     .sort({ createdAt: -1 })
     .lean()
@@ -146,33 +146,41 @@ export const getCustomers = expressAsyncHandler(async (req, res) => {
   const { startDate, endDate } = getMonthDateRange(monthStr);
   // EXTRACTING ALL CUSTOMER IDS FOR BATCH DATABASE QUERIES
   const customerIds = customers.map((c) => c._id);
-  // BATCH FETCHING ALL DELIVERY RECORDS FOR THIS MONTH FOR ALL CUSTOMERS
-  const allDeliveryRecords = await DeliveryRecord.find({
-    customerId: { $in: customerIds },
-    date: { $gte: startDate, $lte: endDate },
-  })
-    .lean()
-    .exec();
-  // BATCH FETCHING ALL PAYMENTS FOR THIS BILLING MONTH FOR ALL CUSTOMERS
-  const allPayments = await Payment.find({
-    customerId: { $in: customerIds },
-    billingMonth: monthStr,
-  })
-    .lean()
-    .exec();
-  // BATCH FETCHING ALL DELIVERED RECORDS ACROSS ALL TIME FOR OUTSTANDING BALANCE CALCULATION
-  const allTimeDeliveredRecords = await DeliveryRecord.find({
-    customerId: { $in: customerIds },
-    status: "delivered",
-  })
-    .lean()
-    .exec();
-  // BATCH FETCHING ALL PAYMENTS ACROSS ALL TIME FOR OUTSTANDING BALANCE CALCULATION
-  const allTimePaymentsAll = await Payment.find({
-    customerId: { $in: customerIds },
-  })
-    .lean()
-    .exec();
+  // BATCH FETCHING ALL FOUR DATA SETS IN PARALLEL TO MINIMIZE RESPONSE TIME
+  const [
+    allDeliveryRecords,
+    allPayments,
+    allTimeDeliveredRecords,
+    allTimePaymentsAll,
+  ] = await Promise.all([
+    // CURRENT MONTH DELIVERY RECORDS FOR ALL CUSTOMERS
+    DeliveryRecord.find({
+      customerId: { $in: customerIds },
+      date: { $gte: startDate, $lte: endDate },
+    })
+      .lean()
+      .exec(),
+    // CURRENT MONTH PAYMENTS FOR ALL CUSTOMERS
+    Payment.find({
+      customerId: { $in: customerIds },
+      billingMonth: monthStr,
+    })
+      .lean()
+      .exec(),
+    // ALL-TIME DELIVERED RECORDS FOR OUTSTANDING BALANCE CALCULATION
+    DeliveryRecord.find({
+      customerId: { $in: customerIds },
+      status: "delivered",
+    })
+      .lean()
+      .exec(),
+    // ALL-TIME PAYMENTS FOR OUTSTANDING BALANCE CALCULATION
+    Payment.find({
+      customerId: { $in: customerIds },
+    })
+      .lean()
+      .exec(),
+  ]);
   // GROUPING DELIVERY RECORDS BY CUSTOMER ID FOR O(1) LOOKUP
   const deliveryByCustomer = {};
   // LOOPING THROUGH ALL DELIVERY RECORDS
@@ -325,15 +333,15 @@ export const getCustomers = expressAsyncHandler(async (req, res) => {
  */
 // <== GET CUSTOMER DETAIL ==>
 export const getCustomerDetail = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING CUSTOMER ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING MONTH FROM QUERY OR DEFAULTING TO CURRENT MONTH
   const monthStr = req.query.month || getCurrentMonthStr();
-  // FINDING CUSTOMER AND VERIFYING OWNERSHIP
-  const customer = await Customer.findOne({ _id: id, userId }).lean().exec();
-  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS USER
+  // FINDING CUSTOMER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const customer = await Customer.findOne({ _id: id, accountId }).lean().exec();
+  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!customer) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({
@@ -345,22 +353,30 @@ export const getCustomerDetail = expressAsyncHandler(async (req, res) => {
   }
   // GETTING MONTH DATE RANGE FOR SELECTED MONTH
   const { startDate, endDate } = getMonthDateRange(monthStr);
-  // FETCHING DELIVERY RECORDS FOR SELECTED MONTH ONLY (FOR CALENDAR DISPLAY)
-  const deliveryRecords = await DeliveryRecord.find({
-    customerId: id,
-    date: { $gte: startDate, $lte: endDate },
-  })
-    .sort({ date: 1 })
-    .lean()
-    .exec();
-  // FETCHING PAYMENTS FOR SELECTED BILLING MONTH ONLY
-  const payments = await Payment.find({
-    customerId: id,
-    billingMonth: monthStr,
-  })
-    .sort({ paymentDate: -1 })
-    .lean()
-    .exec();
+  // FETCHING ALL FOUR QUERY SETS IN PARALLEL TO MINIMIZE RESPONSE TIME
+  const [deliveryRecords, payments, allTimeDeliveries, allTimePayments] =
+    await Promise.all([
+      // DELIVERY RECORDS FOR SELECTED MONTH ONLY (FOR CALENDAR DISPLAY)
+      DeliveryRecord.find({
+        customerId: id,
+        date: { $gte: startDate, $lte: endDate },
+      })
+        .sort({ date: 1 })
+        .lean()
+        .exec(),
+      // PAYMENTS FOR SELECTED BILLING MONTH ONLY
+      Payment.find({
+        customerId: id,
+        billingMonth: monthStr,
+      })
+        .sort({ paymentDate: -1 })
+        .lean()
+        .exec(),
+      // ALL DELIVERY RECORDS ACROSS ALL TIME FOR MONTHLY BREAKDOWN
+      DeliveryRecord.find({ customerId: id }).sort({ date: 1 }).lean().exec(),
+      // ALL PAYMENTS ACROSS ALL TIME FOR MONTHLY BREAKDOWN
+      Payment.find({ customerId: id }).lean().exec(),
+    ]);
   // COMPUTING MONTHLY STATS FOR SELECTED MONTH
   const monthlyStats = computeMonthlyStats(
     monthStr,
@@ -368,13 +384,6 @@ export const getCustomerDetail = expressAsyncHandler(async (req, res) => {
     payments,
     customer.pricePerLiter,
   );
-  // FETCHING ALL DELIVERY RECORDS FOR THIS CUSTOMER ACROSS ALL TIME FOR BREAKDOWN
-  const allTimeDeliveries = await DeliveryRecord.find({ customerId: id })
-    .sort({ date: 1 })
-    .lean()
-    .exec();
-  // FETCHING ALL PAYMENTS FOR THIS CUSTOMER ACROSS ALL TIME FOR BREAKDOWN
-  const allTimePayments = await Payment.find({ customerId: id }).lean().exec();
   // GROUPING ALL-TIME DELIVERY RECORDS BY MONTH STRING
   const deliveriesByMonth = {};
   // LOOPING THROUGH ALL DELIVERY RECORDS TO GROUP BY MONTH
@@ -471,13 +480,15 @@ export const getCustomerDetail = expressAsyncHandler(async (req, res) => {
  */
 // <== ADD CUSTOMER ==>
 export const addCustomer = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING CUSTOMER DATA FROM REQUEST BODY
   const { name, phone, address, dailyMilk, pricePerLiter } = req.body;
-  // CHECKING FOR DUPLICATE CUSTOMER NAME FOR THIS USER (CASE-INSENSITIVE)
+  // CHECKING FOR DUPLICATE CUSTOMER NAME WITHIN THIS ACCOUNT (CASE-INSENSITIVE)
   const existingCustomer = await Customer.findOne({
-    userId,
+    accountId,
     name: { $regex: `^${name.trim()}$`, $options: "i" },
   })
     .lean()
@@ -494,7 +505,8 @@ export const addCustomer = expressAsyncHandler(async (req, res) => {
   }
   // CREATING NEW CUSTOMER IN DATABASE
   const customer = await Customer.create({
-    userId,
+    accountId,
+    performedBy,
     name: name.trim(),
     phone: phone?.trim() || null,
     address: address?.trim() || null,
@@ -519,15 +531,15 @@ export const addCustomer = expressAsyncHandler(async (req, res) => {
  */
 // <== UPDATE CUSTOMER ==>
 export const updateCustomer = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING CUSTOMER ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING UPDATE DATA FROM REQUEST BODY
   const { name, phone, address, dailyMilk, pricePerLiter } = req.body;
-  // FINDING CUSTOMER AND VERIFYING OWNERSHIP
-  const customer = await Customer.findOne({ _id: id, userId }).exec();
-  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS USER
+  // FINDING CUSTOMER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const customer = await Customer.findOne({ _id: id, accountId }).exec();
+  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!customer) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({
@@ -539,9 +551,9 @@ export const updateCustomer = expressAsyncHandler(async (req, res) => {
   }
   // CHECKING FOR DUPLICATE NAME IF NAME IS BEING UPDATED
   if (name !== undefined) {
-    // LOOKING FOR ANOTHER CUSTOMER WITH THE SAME NAME (EXCLUDING CURRENT)
+    // LOOKING FOR ANOTHER CUSTOMER IN THIS ACCOUNT WITH THE SAME NAME (EXCLUDING CURRENT)
     const duplicateName = await Customer.findOne({
-      userId,
+      accountId,
       _id: { $ne: id },
       name: { $regex: `^${name.trim()}$`, $options: "i" },
     })
@@ -589,13 +601,13 @@ export const updateCustomer = expressAsyncHandler(async (req, res) => {
  */
 // <== DELETE CUSTOMER ==>
 export const deleteCustomer = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING CUSTOMER ID FROM REQUEST PARAMS
   const { id } = req.params;
-  // FINDING CUSTOMER AND VERIFYING OWNERSHIP
-  const customer = await Customer.findOne({ _id: id, userId }).lean().exec();
-  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS USER
+  // FINDING CUSTOMER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const customer = await Customer.findOne({ _id: id, accountId }).lean().exec();
+  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!customer) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({
@@ -605,21 +617,17 @@ export const deleteCustomer = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // FETCHING ALL DELIVERED RECORDS ACROSS ALL TIME TO COMPUTE TOTAL AMOUNT DUE
-  const allDeliveredRecords = await DeliveryRecord.find({
-    customerId: id,
-    status: "delivered",
-  })
-    .lean()
-    .exec();
-  // FETCHING ALL PAYMENTS ACROSS ALL TIME
-  const allPayments = await Payment.find({ customerId: id }).lean().exec();
-  // CALCULATING ALL-TIME TOTAL AMOUNT DUE
+  // FETCHING DELIVERED RECORDS AND ALL-TIME PAYMENTS IN PARALLEL FOR OUTSTANDING BALANCE CHECK
+  const [allDeliveredRecords, allPayments] = await Promise.all([
+    DeliveryRecord.find({ customerId: id, status: "delivered" }).lean().exec(),
+    Payment.find({ customerId: id }).lean().exec(),
+  ]);
+  // CALCULATING ALL-TIME TOTAL MILK DELIVERED FOR THIS CUSTOMER
   const totalMilkDeliveredAllTime = allDeliveredRecords.reduce(
     (sum, d) => sum + d.milkQuantity,
     0,
   );
-  // CALCULATING ALL-TIME TOTAL AMOUNT DUE
+  // CALCULATING ALL-TIME TOTAL AMOUNT DUE FOR THIS CUSTOMER
   const totalAmountDueAllTime = parseFloat(
     (totalMilkDeliveredAllTime * customer.pricePerLiter).toFixed(2),
   );
@@ -642,9 +650,9 @@ export const deleteCustomer = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // DELETING CUSTOMER AND ALL RELATED RECORDS IN PARALLEL
+  // DELETING CUSTOMER AND ALL RELATED RECORDS IN PARALLEL TO MINIMIZE RESPONSE TIME
   await Promise.all([
-    Customer.deleteOne({ _id: id }),
+    Customer.deleteOne({ _id: id, accountId }),
     DeliveryRecord.deleteMany({ customerId: id }),
     Payment.deleteMany({ customerId: id }),
   ]);
@@ -665,15 +673,17 @@ export const deleteCustomer = expressAsyncHandler(async (req, res) => {
  */
 // <== MARK DELIVERY ==>
 export const markDelivery = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING CUSTOMER ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING DATE AND STATUS FROM REQUEST BODY
   const { date, status } = req.body;
-  // FINDING CUSTOMER AND VERIFYING OWNERSHIP
-  const customer = await Customer.findOne({ _id: id, userId }).lean().exec();
-  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS USER
+  // FINDING CUSTOMER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const customer = await Customer.findOne({ _id: id, accountId }).lean().exec();
+  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!customer) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({
@@ -701,10 +711,11 @@ export const markDelivery = expressAsyncHandler(async (req, res) => {
   const deliveryRecord = await DeliveryRecord.findOneAndUpdate(
     // FILTER: FIND EXISTING RECORD FOR THIS CUSTOMER AND DATE
     { customerId: id, date },
-    // UPDATE: SET NEW VALUES
+    // UPDATE: SET NEW VALUES INCLUDING ATTRIBUTION FIELDS
     {
       $set: {
-        userId,
+        accountId,
+        performedBy,
         milkQuantity,
         status,
       },
@@ -716,22 +727,18 @@ export const markDelivery = expressAsyncHandler(async (req, res) => {
     .exec();
   // EXTRACTING BILLING MONTH FROM DATE (YYYY-MM)
   const billingMonth = date.substring(0, 7);
-  // RECALCULATING MONTHLY STATS AFTER UPDATE
+  // GETTING MONTH DATE RANGE FOR RECALCULATED STATS
   const { startDate, endDate } = getMonthDateRange(billingMonth);
-  // FETCHING UPDATED DELIVERY RECORDS FOR THIS MONTH
-  const monthDeliveries = await DeliveryRecord.find({
-    customerId: id,
-    date: { $gte: startDate, $lte: endDate },
-  })
-    .lean()
-    .exec();
-  // FETCHING PAYMENTS FOR THIS BILLING MONTH
-  const monthPayments = await Payment.find({
-    customerId: id,
-    billingMonth,
-  })
-    .lean()
-    .exec();
+  // FETCHING UPDATED DELIVERY RECORDS AND PAYMENTS FOR THIS MONTH IN PARALLEL TO MINIMIZE RESPONSE TIME
+  const [monthDeliveries, monthPayments] = await Promise.all([
+    DeliveryRecord.find({
+      customerId: id,
+      date: { $gte: startDate, $lte: endDate },
+    })
+      .lean()
+      .exec(),
+    Payment.find({ customerId: id, billingMonth }).lean().exec(),
+  ]);
   // COMPUTING UPDATED MONTHLY STATS
   const monthlyStats = computeMonthlyStats(
     billingMonth,
@@ -766,15 +773,17 @@ export const markDelivery = expressAsyncHandler(async (req, res) => {
  */
 // <== ADD PAYMENT ==>
 export const addPayment = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING CUSTOMER ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING PAYMENT DATA FROM REQUEST BODY
   const { amount, billingMonth, paymentDate, note } = req.body;
-  // FINDING CUSTOMER AND VERIFYING OWNERSHIP
-  const customer = await Customer.findOne({ _id: id, userId }).lean().exec();
-  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS USER
+  // FINDING CUSTOMER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const customer = await Customer.findOne({ _id: id, accountId }).lean().exec();
+  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!customer) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({
@@ -790,15 +799,20 @@ export const addPayment = expressAsyncHandler(async (req, res) => {
   const resolvedPaymentDate = paymentDate?.trim() || getTodayDateStr();
   // GETTING MONTH DATE RANGE FOR DELIVERY RECORD QUERIES
   const { startDate, endDate } = getMonthDateRange(billingMonth);
-  // FETCHING ALL DELIVERED RECORDS FOR THIS BILLING MONTH
-  const monthDeliveries = await DeliveryRecord.find({
-    customerId: id,
-    date: { $gte: startDate, $lte: endDate },
-    status: "delivered",
-  })
-    .lean()
-    .exec();
-  // CALCULATING MONTHLY TOTAL DUE FOR THIS BILLING MONTH
+  // FETCHING DELIVERED RECORDS AND EXISTING PAYMENTS IN PARALLEL TO MINIMIZE RESPONSE TIME
+  const [monthDeliveries, existingPayments] = await Promise.all([
+    // DELIVERED RECORDS FOR THIS BILLING MONTH ONLY
+    DeliveryRecord.find({
+      customerId: id,
+      date: { $gte: startDate, $lte: endDate },
+      status: "delivered",
+    })
+      .lean()
+      .exec(),
+    // EXISTING PAYMENTS FOR THIS BILLING MONTH
+    Payment.find({ customerId: id, billingMonth }).lean().exec(),
+  ]);
+  // CALCULATING MONTHLY TOTAL MILK DELIVERED FOR THIS BILLING MONTH
   const totalMilkDelivered = monthDeliveries.reduce(
     (sum, d) => sum + d.milkQuantity,
     0,
@@ -807,13 +821,6 @@ export const addPayment = expressAsyncHandler(async (req, res) => {
   const monthlyTotal = parseFloat(
     (totalMilkDelivered * customer.pricePerLiter).toFixed(2),
   );
-  // FETCHING EXISTING PAYMENTS FOR THIS BILLING MONTH
-  const existingPayments = await Payment.find({
-    customerId: id,
-    billingMonth,
-  })
-    .lean()
-    .exec();
   // CALCULATING ALREADY PAID AMOUNT FOR THIS BILLING MONTH
   const alreadyPaid = parseFloat(
     existingPayments.reduce((sum, p) => sum + p.amount, 0).toFixed(2),
@@ -852,7 +859,8 @@ export const addPayment = expressAsyncHandler(async (req, res) => {
   // CREATING PAYMENT RECORD IN DATABASE
   const payment = await Payment.create({
     customerId: id,
-    userId,
+    accountId,
+    performedBy,
     amount: parsedAmount,
     billingMonth,
     paymentDate: resolvedPaymentDate,
