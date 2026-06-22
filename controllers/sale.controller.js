@@ -83,15 +83,15 @@ const buildStats = (facetResult) => {
 
 /**
  * GET SALES WITH PAGINATION, FILTERS, AND COMBINED PERIOD STATS
- * STATS ALWAYS REFLECT ALL SALE TYPES FOR THE PERIOD — NOT SCOPED TO SINGLE SALE PARAM
+ * STATS ALWAYS REFLECT ALL SALE TYPES FOR THE PERIOD — NOT SCOPED TO SINGLE SALE TYPE PARAM
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
  */
 // <== GET SALES ==>
 export const getSales = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING SALE TYPE FROM QUERY (CUSTOMER | SHOP) — REQUIRED FOR RECORD FETCHING
   const saleType = req.query.saleType;
   // GETTING FILTER TYPE FROM QUERY (TODAY | WEEK | MONTH) — DEFAULTS TO MONTH
@@ -112,24 +112,23 @@ export const getSales = expressAsyncHandler(async (req, res) => {
   const skip = (page - 1) * limit;
   // GETTING DATE RANGE FOR SELECTED FILTER
   const { startDate, endDate } = getDateRangeForFilter(filter, monthStr);
-  // BASE USER + DATE QUERY OBJECT ID
-  const userObjectId = new mongoose.Types.ObjectId(userId);
-  // BUILDING STATS MATCH QUERY (ACROSS ALL SALE TYPES — ALWAYS COMBINED TOTALS)
+  // CONVERTING ACCOUNT ID TO OBJECT ID FOR AGGREGATION PIPELINE USE
+  const accountObjectId = new mongoose.Types.ObjectId(accountId);
+  // BUILDING STATS MATCH QUERY
   const statsMatchQuery = {
-    userId: userObjectId,
+    accountId: accountObjectId,
     date: { $gte: startDate, $lte: endDate },
   };
   // BUILDING RECORD MATCH QUERY (FILTERED BY SALE TYPE + TYPE-SPECIFIC FILTERS)
   const recordMatchQuery = {
-    userId: userObjectId,
+    accountId: accountObjectId,
     saleType,
     date: { $gte: startDate, $lte: endDate },
   };
   // APPLYING CUSTOMER-SPECIFIC FILTERS
   if (saleType === "customer") {
-    // APPLYING SEARCH FILTER ON CUSTOMER NAME IF PROVIDED
+    // APPLYING SEARCH FILTER ON CUSTOMER NAME IF PROVIDED (CASE-INSENSITIVE)
     if (search)
-      // CASE-INSENSITIVE ON CUSTOMER NAME
       recordMatchQuery.customerName = { $regex: search, $options: "i" };
     // APPLYING PENDING ONLY FILTER IF REQUESTED
     if (pendingOnly) recordMatchQuery.pendingAmount = { $gt: 0 };
@@ -141,7 +140,7 @@ export const getSales = expressAsyncHandler(async (req, res) => {
   }
   // RUNNING STATS AGGREGATION, PAGINATED RECORDS, AND COUNT IN PARALLEL
   const [statsAggregation, records, totalCount] = await Promise.all([
-    // AGGREGATION: COMBINED STATS FOR THE PERIOD (NOT PAGINATED — ALL SALE TYPES)
+    // AGGREGATION: COMBINED STATS FOR THE PERIOD (NOT PAGINATED — ALL SALE TYPES ACROSS THE WHOLE ACCOUNT)
     Sale.aggregate([
       // MATCHING DOCUMENTS AGAINST STATS QUERY (ALL SALE TYPES)
       { $match: statsMatchQuery },
@@ -232,8 +231,10 @@ export const getSales = expressAsyncHandler(async (req, res) => {
  */
 // <== ADD SALE ==>
 export const addSale = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING SALE DATA FROM REQUEST BODY
   const {
     saleType,
@@ -249,6 +250,21 @@ export const addSale = expressAsyncHandler(async (req, res) => {
   const parsedQuantity = parseFloat(quantity);
   // PARSING PRICE PER UNIT AS FLOAT
   const parsedPricePerUnit = parseFloat(pricePerUnit);
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES BEFORE MULTIPLYING
+  if (
+    !Number.isFinite(parsedQuantity) ||
+    !Number.isFinite(parsedPricePerUnit) ||
+    parsedQuantity <= 0 ||
+    parsedPricePerUnit <= 0
+  ) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Quantity and Price per Unit must be Valid Positive Numbers!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
   // COMPUTING TOTAL AMOUNT FROM QUANTITY AND PRICE PER UNIT
   const totalAmount = parseFloat(
     (parsedQuantity * parsedPricePerUnit).toFixed(2),
@@ -286,7 +302,8 @@ export const addSale = expressAsyncHandler(async (req, res) => {
   }
   // CREATING NEW SALE RECORD IN DATABASE
   const sale = await Sale.create({
-    userId,
+    accountId,
+    performedBy,
     saleType,
     customerName: saleType === "customer" ? customerName?.trim() : null,
     productType,
@@ -310,7 +327,7 @@ export const addSale = expressAsyncHandler(async (req, res) => {
 
 /**
  * UPDATE AN EXISTING SALE RECORD
- * RECOMPUTES TOTAL AMOUNT IF quantity OR PRICE PER UNIT CHANGES
+ * RECOMPUTES TOTAL AMOUNT IF QUANTITY OR PRICE PER UNIT CHANGES
  * RECOMPUTES PENDING AMOUNT AFTER ANY FINANCIAL FIELD UPDATE
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
@@ -318,8 +335,8 @@ export const addSale = expressAsyncHandler(async (req, res) => {
  */
 // <== UPDATE SALE ==>
 export const updateSale = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING SALE ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING UPDATE DATA FROM REQUEST BODY
@@ -332,9 +349,9 @@ export const updateSale = expressAsyncHandler(async (req, res) => {
     date,
     note,
   } = req.body;
-  // FINDING SALE AND VERIFYING OWNERSHIP
-  const sale = await Sale.findOne({ _id: id, userId }).exec();
-  // IF SALE NOT FOUND OR DOES NOT BELONG TO THIS USER
+  // FINDING SALE AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const sale = await Sale.findOne({ _id: id, accountId }).exec();
+  // IF SALE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!sale) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({
@@ -357,6 +374,21 @@ export const updateSale = expressAsyncHandler(async (req, res) => {
   if (pricePerUnit !== undefined) sale.pricePerUnit = parseFloat(pricePerUnit);
   // RECOMPUTING TOTAL AMOUNT WHENEVER QUANTITY OR PRICE CHANGES
   if (quantity !== undefined || pricePerUnit !== undefined) {
+    // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES BEFORE MULTIPLYING
+    if (
+      !Number.isFinite(sale.quantity) ||
+      !Number.isFinite(sale.pricePerUnit) ||
+      sale.quantity <= 0 ||
+      sale.pricePerUnit <= 0
+    ) {
+      // RETURNING ERROR RESPONSE
+      res.status(400).json({
+        message: "Quantity and Price per Unit must be Valid Positive Numbers!",
+        success: false,
+      });
+      // RETURNING FROM FUNCTION
+      return;
+    }
     // RECOMPUTE USING FINAL POST-UPDATE VALUES OF BOTH FIELDS
     sale.totalAmount = parseFloat(
       (sale.quantity * sale.pricePerUnit).toFixed(2),
@@ -389,7 +421,7 @@ export const updateSale = expressAsyncHandler(async (req, res) => {
     } else if (quantity !== undefined || pricePerUnit !== undefined) {
       // IF TOTAL DECREASED BELOW EXISTING PAID AMOUNT — CAP PAID TO NEW TOTAL
       if (sale.paidAmount > sale.totalAmount) {
-        // APPLYING NEW TOTAL
+        // APPLYING NEW TOTAL AS PAID AMOUNT CAP
         sale.paidAmount = sale.totalAmount;
       }
     }
@@ -422,13 +454,15 @@ export const updateSale = expressAsyncHandler(async (req, res) => {
  */
 // <== DELETE SALE ==>
 export const deleteSale = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING SALE ID FROM REQUEST PARAMS
   const { id } = req.params;
-  // FINDING SALE AND VERIFYING OWNERSHIP BEFORE DELETION
-  const sale = await Sale.findOne({ _id: id, userId }).lean().exec();
-  // IF SALE NOT FOUND OR DOES NOT BELONG TO THIS USER
+  // FINDING AND DELETING IN A SINGLE ATOMIC ROUND TRIP
+  const sale = await Sale.findOneAndDelete({ _id: id, accountId })
+    .lean()
+    .exec();
+  // IF SALE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!sale) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({
@@ -438,8 +472,6 @@ export const deleteSale = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // DELETING SALE RECORD FROM DATABASE
-  await Sale.deleteOne({ _id: id });
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
     message: "Sale Deleted Successfully!",

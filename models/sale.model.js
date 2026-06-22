@@ -4,12 +4,18 @@ import mongoose from "mongoose";
 // <== SALE SCHEMA ==>
 const saleSchema = new mongoose.Schema(
   {
-    // USER ID FIELD (OWNER OF THIS SALE RECORD)
-    userId: {
+    // ACCOUNT ID FIELD (TENANT THIS SALE RECORD BELONGS TO — SHARED ACROSS THE WHOLE TEAM)
+    accountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Account",
+      required: true,
+      index: true,
+    },
+    // PERFORMED BY FIELD (THE USER WHO CREATED THIS RECORD — FOR ATTRIBUTION, NOT OWNERSHIP)
+    performedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
     },
     // SALE TYPE FIELD
     saleType: {
@@ -91,30 +97,30 @@ const saleSchema = new mongoose.Schema(
 
 // <== INDEXES ==>
 /**
- * COMPOUND INDEX FOR USER, SALE TYPE, AND DATE (PRIMARY QUERY PATTERN)
+ * COMPOUND INDEX FOR ACCOUNT, SALE TYPE, AND DATE (PRIMARY QUERY PATTERN)
  */
-// <== COMPOUND INDEX FOR USER, SALE TYPE, AND DATE ==>
-saleSchema.index({ userId: 1, saleType: 1, date: -1 });
+// <== COMPOUND INDEX FOR ACCOUNT, SALE TYPE, AND DATE ==>
+saleSchema.index({ accountId: 1, saleType: 1, date: -1 });
 /**
- * COMPOUND INDEX FOR USER, SALE TYPE, AND PRODUCT TYPE
+ * COMPOUND INDEX FOR ACCOUNT, SALE TYPE, AND PRODUCT TYPE
  */
-// <== COMPOUND INDEX FOR USER, SALE TYPE, AND PRODUCT TYPE ==>
-saleSchema.index({ userId: 1, saleType: 1, productType: 1 });
+// <== COMPOUND INDEX FOR ACCOUNT, SALE TYPE, AND PRODUCT TYPE ==>
+saleSchema.index({ accountId: 1, saleType: 1, productType: 1 });
 /**
- * COMPOUND INDEX FOR COMBINATION FILTER (USER + SALE TYPE + DATE + PRODUCT TYPE)
+ * COMPOUND INDEX FOR COMBINATION FILTER (ACCOUNT + SALE TYPE + DATE + PRODUCT TYPE)
  */
 // <== COMPOUND INDEX FOR COMBINATION FILTER ==>
-saleSchema.index({ userId: 1, saleType: 1, date: -1, productType: 1 });
+saleSchema.index({ accountId: 1, saleType: 1, date: -1, productType: 1 });
 /**
  * COMPOUND INDEX FOR PENDING BALANCE FILTER ON CUSTOMER SALES
  */
 // <== COMPOUND INDEX FOR PENDING FILTER ==>
-saleSchema.index({ userId: 1, saleType: 1, pendingAmount: 1 });
+saleSchema.index({ accountId: 1, saleType: 1, pendingAmount: 1 });
 /**
- * COMPOUND INDEX FOR USER AND CREATION DATE SORTING
+ * COMPOUND INDEX FOR ACCOUNT AND CREATION DATE SORTING
  */
-// <== COMPOUND INDEX FOR USER AND CREATION DATE ==>
-saleSchema.index({ userId: 1, createdAt: -1 });
+// <== COMPOUND INDEX FOR ACCOUNT AND CREATION DATE ==>
+saleSchema.index({ accountId: 1, createdAt: -1 });
 
 // <== EXPORTING THE SALE MODEL ==>
 export const Sale = mongoose.model("Sale", saleSchema);
