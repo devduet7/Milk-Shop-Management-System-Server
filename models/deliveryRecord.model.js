@@ -11,12 +11,18 @@ const deliveryRecordSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    // USER ID FIELD (FOR OWNERSHIP FILTERING WITHOUT CUSTOMER LOOKUP)
-    userId: {
+    // ACCOUNT ID FIELD (TENANT THIS RECORD BELONGS TO — ENABLES ACCOUNT-SCOPED QUERIES WITHOUT CUSTOMER LOOKUP)
+    accountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Account",
+      required: true,
+      index: true,
+    },
+    // PERFORMED BY FIELD (THE USER WHO LAST MARKED THIS DELIVERY — FOR ATTRIBUTION)
+    performedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
     },
     // DATE FIELD (STORED AS YYYY-MM-DD STRING FOR EASY RANGE QUERIES)
     date: {
@@ -56,10 +62,10 @@ deliveryRecordSchema.index({ customerId: 1, date: 1 }, { unique: true });
 // <== COMPOUND INDEX FOR MONTHLY DELIVERED QUERIES ==>
 deliveryRecordSchema.index({ customerId: 1, date: 1, status: 1 });
 /**
- * COMPOUND INDEX FOR USER-LEVEL DATE RANGE QUERIES
+ * COMPOUND INDEX FOR ACCOUNT-LEVEL DATE RANGE QUERIES
  */
-// <== COMPOUND INDEX FOR USER-LEVEL DATE RANGE QUERIES ==>
-deliveryRecordSchema.index({ userId: 1, date: 1 });
+// <== COMPOUND INDEX FOR ACCOUNT-LEVEL DATE RANGE QUERIES ==>
+deliveryRecordSchema.index({ accountId: 1, date: 1 });
 
 // <== EXPORTING THE DELIVERY RECORD MODEL ==>
 export const DeliveryRecord = mongoose.model(
