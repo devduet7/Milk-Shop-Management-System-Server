@@ -66,11 +66,11 @@ const getDateRangeForFilter = (filter, monthStr) => {
 };
 
 // <== HELPER: BUILD EXPENDITURE MATCH QUERY ==>
-const buildMatchQuery = (userId, startDate, endDate, category, search) => {
-  // BASE QUERY WITH USER ID AND DATE RANGE
+const buildMatchQuery = (accountId, startDate, endDate, category, search) => {
+  // BASE QUERY WITH ACCOUNT ID AND DATE RANGE
   const matchQuery = {
-    // CONVERTING USER ID TO OBJECT ID
-    userId: new mongoose.Types.ObjectId(userId),
+    // CONVERTING ACCOUNT ID TO OBJECT ID
+    accountId: new mongoose.Types.ObjectId(accountId),
     // APPLYING DATE RANGE
     date: { $gte: startDate, $lte: endDate },
   };
@@ -116,9 +116,9 @@ const buildStats = (facetResult) => {
  */
 // <== GET EXPENDITURES ==>
 export const getExpenditures = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
-  // GETTING FILTER TYPE FROM QUERY (today | week | month) — DEFAULTS TO MONTH
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING FILTER TYPE FROM QUERY (TODAY | WEEK | MONTH) — DEFAULTS TO MONTH
   const filter = req.query.filter || "month";
   // GETTING MONTH STRING FOR MONTH FILTER (DEFAULTS TO CURRENT MONTH)
   const monthStr = req.query.month || getCurrentMonthStr();
@@ -136,7 +136,7 @@ export const getExpenditures = expressAsyncHandler(async (req, res) => {
   const { startDate, endDate } = getDateRangeForFilter(filter, monthStr);
   // BUILDING BASE MATCH QUERY
   const matchQuery = buildMatchQuery(
-    userId,
+    accountId,
     startDate,
     endDate,
     category,
@@ -227,18 +227,33 @@ export const getExpenditures = expressAsyncHandler(async (req, res) => {
  */
 // <== ADD EXPENDITURE ==>
 export const addExpenditure = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING EXPENDITURE DATA FROM REQUEST BODY
   const { title, category, amount, date, note } = req.body;
+  // PARSING AMOUNT AS FLOAT
+  const parsedAmount = parseFloat(amount);
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES BEFORE STORING
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Amount must be a Valid Positive Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
   // RESOLVING DATE (DEFAULT TO TODAY IF NOT PROVIDED)
   const resolvedDate = date?.trim() || getTodayDateStr();
   // CREATING NEW EXPENDITURE RECORD IN DATABASE
   const expenditure = await Expenditure.create({
-    userId,
+    accountId,
+    performedBy,
     title: title.trim(),
     category,
-    amount: parseFloat(amount),
+    amount: parsedAmount,
     date: resolvedDate,
     note: note?.trim() || null,
   });
@@ -260,15 +275,15 @@ export const addExpenditure = expressAsyncHandler(async (req, res) => {
  */
 // <== UPDATE EXPENDITURE ==>
 export const updateExpenditure = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING EXPENDITURE ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING UPDATE DATA FROM REQUEST BODY
   const { title, category, amount, date, note } = req.body;
-  // FINDING EXPENDITURE AND VERIFYING OWNERSHIP
-  const expenditure = await Expenditure.findOne({ _id: id, userId }).exec();
-  // IF EXPENDITURE NOT FOUND OR DOES NOT BELONG TO THIS USER
+  // FINDING EXPENDITURE AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const expenditure = await Expenditure.findOne({ _id: id, accountId }).exec();
+  // IF EXPENDITURE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!expenditure) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({
@@ -283,7 +298,22 @@ export const updateExpenditure = expressAsyncHandler(async (req, res) => {
   // UPDATING CATEGORY IF PROVIDED
   if (category !== undefined) expenditure.category = category;
   // UPDATING AMOUNT IF PROVIDED
-  if (amount !== undefined) expenditure.amount = parseFloat(amount);
+  if (amount !== undefined) {
+    // PARSING AMOUNT AS FLOAT
+    const parsedAmount = parseFloat(amount);
+    // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      // RETURNING ERROR RESPONSE
+      res.status(400).json({
+        message: "Amount must be a Valid Positive Number!",
+        success: false,
+      });
+      // RETURNING FROM FUNCTION
+      return;
+    }
+    // APPLYING PARSED AMOUNT
+    expenditure.amount = parsedAmount;
+  }
   // UPDATING DATE IF PROVIDED
   if (date !== undefined) expenditure.date = date.trim();
   // UPDATING NOTE IF PROVIDED (ALLOW CLEARING TO NULL)
@@ -308,15 +338,15 @@ export const updateExpenditure = expressAsyncHandler(async (req, res) => {
  */
 // <== DELETE EXPENDITURE ==>
 export const deleteExpenditure = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING EXPENDITURE ID FROM REQUEST PARAMS
   const { id } = req.params;
-  // FINDING EXPENDITURE AND VERIFYING OWNERSHIP BEFORE DELETION
-  const expenditure = await Expenditure.findOne({ _id: id, userId })
+  // FINDING AND DELETING IN A SINGLE ATOMIC ROUND TRIP
+  const expenditure = await Expenditure.findOneAndDelete({ _id: id, accountId })
     .lean()
     .exec();
-  // IF EXPENDITURE NOT FOUND OR DOES NOT BELONG TO THIS USER
+  // IF EXPENDITURE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!expenditure) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({
@@ -326,8 +356,6 @@ export const deleteExpenditure = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // DELETING EXPENDITURE RECORD FROM DATABASE
-  await Expenditure.deleteOne({ _id: id });
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
     message: "Expenditure Deleted Successfully!",
