@@ -116,19 +116,18 @@ const computeMonthlyStats = (
 
 // <== HELPER: COMPUTE ALL-TIME OUTSTANDING STATS FOR A BATCH OF CUSTOMERS ==>
 const computeAllTimeDeliveryStats = async (customerIds, customers) => {
-  // BATCH FETCH ALL-TIME DELIVERED RECORDS FOR ALL CUSTOMERS
-  const allTimeDeliveredRecords = await DeliveryRecord.find({
-    customerId: { $in: customerIds },
-    status: "delivered",
-  })
-    .lean()
-    .exec();
-  // BATCH FETCH ALL-TIME PAYMENTS FOR ALL CUSTOMERS
-  const allTimePaymentsAll = await Payment.find({
-    customerId: { $in: customerIds },
-  })
-    .lean()
-    .exec();
+  // BATCH FETCH ALL-TIME DELIVERED RECORDS AND ALL-TIME PAYMENTS IN PARALLEL
+  const [allTimeDeliveredRecords, allTimePaymentsAll] = await Promise.all([
+    DeliveryRecord.find({
+      customerId: { $in: customerIds },
+      status: "delivered",
+    })
+      .lean()
+      .exec(),
+    Payment.find({ customerId: { $in: customerIds } })
+      .lean()
+      .exec(),
+  ]);
   // GROUP DELIVERIES BY CUSTOMER ID
   const deliveryByCustomer = {};
   // LOOPING THROUGH ALL DELIVERY RECORDS
@@ -210,8 +209,8 @@ const computeAllTimeDeliveryStats = async (customerIds, customers) => {
  */
 // <== GET RECOVERIES ==>
 export const getRecoveries = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING TAB FROM QUERY (DELIVERIES | SALES)
   const tab = req.query.tab || "deliveries";
   // GETTING FILTER TYPE FROM QUERY (TODAY | WEEK | MONTH)
@@ -235,13 +234,13 @@ export const getRecoveries = expressAsyncHandler(async (req, res) => {
   // GETTING BILLING MONTH DATE RANGE (FULL MONTH FOR MONTHLY STATS)
   const { startDate: monthStart, endDate: monthEnd } =
     getMonthDateRange(billingMonth);
-  // USER OBJECT ID FOR AGGREGATION QUERIES
-  const userObjectId = new mongoose.Types.ObjectId(userId);
-  // BUILDING CUSTOMER QUERY FOR DELIVERY TAB
-  const customerQuery = { userId };
-  // BUILDING CUSTOMER QUERY FOR SALE TAB
+  // CONVERTING ACCOUNT ID TO OBJECT ID FOR AGGREGATION PIPELINE USE
+  const accountObjectId = new mongoose.Types.ObjectId(accountId);
+  // BUILDING BASE CUSTOMER QUERY FOR THIS ACCOUNT
+  const customerQuery = { accountId };
+  // APPLYING SEARCH FILTER ON DELIVERY TAB — FILTERS BY CUSTOMER NAME OR PHONE
   if (search && tab === "deliveries") {
-    // BUILDING CUSTOMER QUERY FOR DELIVERY TAB
+    // FILTERING BY CUSTOMER NAME OR PHONE USING CASE-INSENSITIVE REGEX
     customerQuery.$or = [
       // MATCHING CUSTOMER NAME THROUGH REGEX
       { name: { $regex: search, $options: "i" } },
@@ -251,13 +250,13 @@ export const getRecoveries = expressAsyncHandler(async (req, res) => {
   }
   // FETCH ALL CUSTOMERS AND COMBINED SALES STATS IN PARALLEL
   const [allCustomers, salesStatsAgg] = await Promise.all([
-    // ALL CUSTOMERS FOR THIS USER (USED FOR BOTH DELIVERY RECORDS AND COMBINED STATS)
+    // ALL CUSTOMERS FOR THIS ACCOUNT (USED FOR BOTH DELIVERY RECORDS AND COMBINED STATS)
     Customer.find(customerQuery).sort({ createdAt: -1 }).lean().exec(),
     // ALL-TIME COMBINED SALES STATS FOR STATS CARDS
     Sale.aggregate([
-      // MATCHING SALES FOR THIS USER
-      { $match: { userId: userObjectId, saleType: "customer" } },
-      // MATCHING SALES FOR SELECTED DATE RANGE
+      // MATCHING CUSTOMER SALES FOR THIS ACCOUNT
+      { $match: { accountId: accountObjectId, saleType: "customer" } },
+      // GROUPING TO COMPUTE ALL-TIME TOTALS
       {
         $group: {
           _id: null,
@@ -313,7 +312,7 @@ export const getRecoveries = expressAsyncHandler(async (req, res) => {
   let totalCount = 0;
   // IF DELIVERIES TAB
   if (tab === "deliveries") {
-    // BATCH FETCH DELIVERY RECORDS FOR BILLING MONTH (ALL CUSTOMERS)
+    // BATCH FETCH DELIVERY RECORDS AND PAYMENTS FOR BILLING MONTH IN PARALLEL
     const [billingMonthDeliveries, billingMonthPayments] = await Promise.all([
       DeliveryRecord.find({
         customerId: { $in: allCustomerIds },
@@ -328,11 +327,11 @@ export const getRecoveries = expressAsyncHandler(async (req, res) => {
         .lean()
         .exec(),
     ]);
-    // EXTRACT UNIQUE CUSTOMER IDS WITH ACTIVITY IN THE FILTER PERIOD
+    // EXTRACT UNIQUE CUSTOMER IDS WITH ACTIVITY IN THE FILTER PERIOD (TODAY / WEEK FILTERS ONLY)
     let activeCustomerIds = null;
-    // IF NOT MONTH FILTER
+    // IF NOT MONTH FILTER — NEED TO NARROW TO CUSTOMERS WITH PERIOD ACTIVITY
     if (filter !== "month") {
-      // BATCH FETCH DELIVERY RECORDS FOR FILTER PERIOD
+      // BATCH FETCH DELIVERY RECORDS FOR THE SELECTED FILTER PERIOD
       const periodDeliveries = await DeliveryRecord.find({
         customerId: { $in: allCustomerIds },
         date: { $gte: startDate, $lte: endDate },
@@ -371,12 +370,12 @@ export const getRecoveries = expressAsyncHandler(async (req, res) => {
       .filter((customer) => {
         // APPLY PERIOD FILTER: IF NOT MONTH FILTER, ONLY INCLUDE CUSTOMERS WITH ACTIVITY
         if (activeCustomerIds !== null) {
-          // CUSTOMER HAS ACTIVITY
+          // CUSTOMER HAS ACTIVITY IN THE SELECTED PERIOD
           return activeCustomerIds.has(customer._id.toString());
         }
         // MONTH FILTER: INCLUDE ALL CUSTOMERS WITH ANY BILLING ACTIVITY
         const custId = customer._id.toString();
-        // CHECK IF CUSTOMER HAS ANY DELIVERIES OR PAYMENTS
+        // CHECK IF CUSTOMER HAS ANY DELIVERIES
         const hasDeliveries = (deliveriesByCustomer[custId] || []).length > 0;
         // CHECK IF CUSTOMER HAS ANY PAYMENTS
         const hasPayments = (paymentsByCustomer[custId] || []).length > 0;
@@ -386,9 +385,9 @@ export const getRecoveries = expressAsyncHandler(async (req, res) => {
       .map((customer) => {
         // GET CUSTOMER ID
         const custId = customer._id.toString();
-        // GET DELIVERIES AND PAYMENTS FOR CUSTOMER
+        // GET DELIVERIES FOR THIS CUSTOMER
         const deliveries = deliveriesByCustomer[custId] || [];
-        // GET PAYMENTS FOR CUSTOMER
+        // GET PAYMENTS FOR THIS CUSTOMER
         const payments = paymentsByCustomer[custId] || [];
         // COMPUTE MONTHLY STATS FOR THE BILLING MONTH
         const monthlyStats = computeMonthlyStats(
@@ -421,34 +420,33 @@ export const getRecoveries = expressAsyncHandler(async (req, res) => {
           updatedAt: customer.updatedAt,
         };
       });
-
     // APPLY STATUS FILTER BASED ON MONTHLY STATS PENDING
     const statusFiltered = enrichedCustomers.filter((c) => {
       // APPLY STATUS FILTER ON PENDING
       if (status === "pending") return c.monthlyStats.pending > 0;
       // APPLY STATUS FILTER ON CLEARED
       if (status === "cleared") return c.monthlyStats.pending === 0;
-      // APPLY STATUS FILTER ON ALL
+      // INCLUDE ALL IF NO STATUS FILTER
       return true;
     });
     // SORT BY MONTHLY PENDING DESCENDING (MOST OVERDUE FIRST)
     statusFiltered.sort(
       (a, b) => b.monthlyStats.pending - a.monthlyStats.pending,
     );
-    // SET TOTAL COUNT AND PAGINATE
+    // SET TOTAL COUNT
     totalCount = statusFiltered.length;
-    // APPLY PAGINATION LOGIC
+    // APPLY PAGINATION SLICE
     records = statusFiltered.slice(skip, skip + limit);
   }
   // IF TAB IS SALES
   if (tab === "sales") {
-    // BUILD SALE MATCH QUERY
+    // BUILD SALE MATCH QUERY SCOPED TO THIS ACCOUNT
     const saleMatchQuery = {
-      userId: userObjectId,
+      accountId: accountObjectId,
       saleType: "customer",
       date: { $gte: startDate, $lte: endDate },
     };
-    // APPLY SEARCH ON CUSTOMER NAME
+    // APPLY SEARCH ON CUSTOMER NAME IF PROVIDED
     if (search) saleMatchQuery.customerName = { $regex: search, $options: "i" };
     // APPLY STATUS FILTER ON PENDING AMOUNT
     if (status === "pending") saleMatchQuery.pendingAmount = { $gt: 0 };
@@ -508,15 +506,17 @@ export const getRecoveries = expressAsyncHandler(async (req, res) => {
  */
 // <== ADD DELIVERY PAYMENT ==>
 export const addDeliveryPayment = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING CUSTOMER ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING PAYMENT DATA FROM REQUEST BODY
   const { amount, billingMonth, paymentDate, note } = req.body;
-  // FINDING CUSTOMER AND VERIFYING OWNERSHIP
-  const customer = await Customer.findOne({ _id: id, userId }).lean().exec();
-  // IF CUSTOMER NOT FOUND
+  // FINDING CUSTOMER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const customer = await Customer.findOne({ _id: id, accountId }).lean().exec();
+  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!customer) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({ message: "Customer Not Found!", success: false });
@@ -525,31 +525,40 @@ export const addDeliveryPayment = expressAsyncHandler(async (req, res) => {
   }
   // PARSING PAYMENT AMOUNT
   const parsedAmount = parseFloat(amount);
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Amount must be a Valid Positive Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
   // RESOLVING PAYMENT DATE
   const resolvedPaymentDate = paymentDate?.trim() || getTodayDateStr();
   // GETTING DATE RANGE FOR BILLING MONTH
   const { startDate, endDate } = getMonthDateRange(billingMonth);
-  // FETCHING DELIVERY RECORDS FOR THE BILLING MONTH
-  const monthDeliveries = await DeliveryRecord.find({
-    customerId: id,
-    date: { $gte: startDate, $lte: endDate },
-    status: "delivered",
-  })
-    .lean()
-    .exec();
-  // CALCULATING MONTHLY TOTAL DUE
+  // FETCHING DELIVERY RECORDS AND EXISTING PAYMENTS IN PARALLEL
+  const [monthDeliveries, existingPayments] = await Promise.all([
+    DeliveryRecord.find({
+      customerId: id,
+      date: { $gte: startDate, $lte: endDate },
+      status: "delivered",
+    })
+      .lean()
+      .exec(),
+    Payment.find({ customerId: id, billingMonth }).lean().exec(),
+  ]);
+  // CALCULATING TOTAL MILK DELIVERED FOR THIS BILLING MONTH
   const totalMilkDelivered = monthDeliveries.reduce(
     (sum, d) => sum + d.milkQuantity,
     0,
   );
-  // CALCULATING MONTHLY TOTAL
+  // CALCULATING MONTHLY TOTAL DUE
   const monthlyTotal = parseFloat(
     (totalMilkDelivered * customer.pricePerLiter).toFixed(2),
   );
-  // FETCHING EXISTING PAYMENTS FOR THIS BILLING MONTH
-  const existingPayments = await Payment.find({ customerId: id, billingMonth })
-    .lean()
-    .exec();
   // CALCULATING ALREADY PAID AMOUNT
   const alreadyPaid = parseFloat(
     existingPayments.reduce((sum, p) => sum + p.amount, 0).toFixed(2),
@@ -585,10 +594,11 @@ export const addDeliveryPayment = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // CREATING PAYMENT RECORD IN DATABASE
+  // CREATING PAYMENT RECORD IN DATABASE WITH ACCOUNT AND ATTRIBUTION FIELDS
   const payment = await Payment.create({
     customerId: id,
-    userId,
+    accountId,
+    performedBy,
     amount: parsedAmount,
     billingMonth,
     paymentDate: resolvedPaymentDate,
@@ -627,19 +637,19 @@ export const addDeliveryPayment = expressAsyncHandler(async (req, res) => {
  */
 // <== UPDATE SALE PAYMENT ==>
 export const updateSalePayment = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING SALE ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING PAID AMOUNT FROM REQUEST BODY
   const { paidAmount } = req.body;
-  // FINDING SALE AND VERIFYING OWNERSHIP (MUST BE CUSTOMER SALE)
+  // FINDING SALE AND VERIFYING IT BELONGS TO THIS ACCOUNT (MUST BE CUSTOMER SALE)
   const sale = await Sale.findOne({
     _id: id,
-    userId,
+    accountId,
     saleType: "customer",
   }).exec();
-  // IF SALE NOT FOUND
+  // IF SALE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!sale) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({ message: "Sale Not Found!", success: false });
@@ -648,6 +658,16 @@ export const updateSalePayment = expressAsyncHandler(async (req, res) => {
   }
   // PARSING NEW PAID AMOUNT
   const parsedPaidAmount = parseFloat(paidAmount);
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES (DEFENSE IN DEPTH)
+  if (!Number.isFinite(parsedPaidAmount) || parsedPaidAmount < 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Paid Amount must be a Valid Non-Negative Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
   // VALIDATING PAID AMOUNT DOES NOT EXCEED TOTAL
   if (parsedPaidAmount > sale.totalAmount) {
     // RETURNING VALIDATION ERROR
@@ -686,23 +706,25 @@ export const updateSalePayment = expressAsyncHandler(async (req, res) => {
  */
 // <== DELETE SALE RECORD ==>
 export const deleteSaleRecord = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING SALE ID FROM REQUEST PARAMS
   const { id } = req.params;
-  // FINDING SALE AND VERIFYING OWNERSHIP
-  const sale = await Sale.findOne({ _id: id, userId, saleType: "customer" })
+  // FINDING AND DELETING IN A SINGLE ATOMIC ROUND TRIP
+  const sale = await Sale.findOneAndDelete({
+    _id: id,
+    accountId,
+    saleType: "customer",
+  })
     .lean()
     .exec();
-  // IF SALE NOT FOUND
+  // IF SALE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!sale) {
     // RETURNING NOT FOUND RESPONSE
     res.status(404).json({ message: "Sale Not Found!", success: false });
     // RETURNING FROM FUNCTION
     return;
   }
-  // DELETING SALE RECORD
-  await Sale.deleteOne({ _id: id });
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
     message: "Sale Record Deleted Successfully!",
