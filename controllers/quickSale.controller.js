@@ -81,8 +81,8 @@ const getDateRangeForFilter = (filterType, monthStr, specificDate) => {
  */
 // <== GET QUICK SALES ==>
 export const getQuickSales = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING FILTER TYPE (TODAY | WEEK | MONTH | DATE) — DEFAULTS TO TODAY
   const filterType = req.query.filterType || "today";
   // GETTING SPECIFIC DATE FOR DATE FILTER (YYYY-MM-DD)
@@ -97,17 +97,17 @@ export const getQuickSales = expressAsyncHandler(async (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
   // CALCULATING SKIP
   const skip = (page - 1) * limit;
-  // USER OBJECT ID FOR AGGREGATION QUERIES
-  const userObjectId = new mongoose.Types.ObjectId(userId);
+  // CONVERTING ACCOUNT ID TO OBJECT ID FOR AGGREGATION PIPELINE USE
+  const accountObjectId = new mongoose.Types.ObjectId(accountId);
   // GETTING DATE RANGE FOR SELECTED FILTER
   const { startDate, endDate } = getDateRangeForFilter(
     filterType,
     monthStr,
     specificDate,
   );
-  // BUILDING BASE MATCH QUERY
+  // BUILDING BASE MATCH QUERY SCOPED TO THE WHOLE ACCOUNT
   const baseMatch = {
-    userId: userObjectId,
+    accountId: accountObjectId,
     date: { $gte: startDate, $lte: endDate },
   };
   // APPLYING PRODUCT TYPE FILTER WHEN NOT ALL
@@ -198,21 +198,39 @@ export const getQuickSales = expressAsyncHandler(async (req, res) => {
  */
 // <== ADD QUICK SALE ==>
 export const addQuickSale = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING SALE DATA FROM REQUEST BODY
   const { type, quantity, rate, date, note } = req.body;
   // PARSING QUANTITY AS FLOAT
   const parsedQty = parseFloat(quantity);
   // PARSING RATE AS FLOAT
   const parsedRate = parseFloat(rate);
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES BEFORE MULTIPLYING
+  if (
+    !Number.isFinite(parsedQty) ||
+    !Number.isFinite(parsedRate) ||
+    parsedQty <= 0 ||
+    parsedRate <= 0
+  ) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Quantity and Rate must be Valid Positive Numbers!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
   // COMPUTING TOTAL — STORED DENORMALISED TO AVOID MULTIPLICATION AT QUERY TIME
   const total = parseFloat((parsedQty * parsedRate).toFixed(2));
   // RESOLVING DATE — DEFAULTS TO TODAY IF NOT PROVIDED
   const resolvedDate = date?.trim() || getTodayDateStr();
   // CREATING QUICK SALE RECORD IN DATABASE
   const quickSale = await QuickSale.create({
-    userId,
+    accountId,
+    performedBy,
     type,
     quantity: parsedQty,
     rate: parsedRate,
@@ -239,15 +257,15 @@ export const addQuickSale = expressAsyncHandler(async (req, res) => {
  */
 // <== UPDATE QUICK SALE ==>
 export const updateQuickSale = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING QUICK SALE ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING UPDATE DATA FROM REQUEST BODY
   const { type, quantity, rate, date, note } = req.body;
-  // FINDING QUICK SALE AND VERIFYING OWNERSHIP
-  const quickSale = await QuickSale.findOne({ _id: id, userId });
-  // IF QUICK SALE NOT FOUND
+  // FINDING QUICK SALE AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const quickSale = await QuickSale.findOne({ _id: id, accountId }).exec();
+  // IF QUICK SALE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!quickSale) {
     // RETURNING NOT FOUND RESPONSE
     res
@@ -266,6 +284,21 @@ export const updateQuickSale = expressAsyncHandler(async (req, res) => {
   if (date !== undefined) quickSale.date = date.trim();
   // UPDATING THE NOTE OF SALE IF PROVIDED
   if (note !== undefined) quickSale.note = note?.trim() || null;
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES BEFORE RECOMPUTING TOTAL
+  if (
+    !Number.isFinite(quickSale.quantity) ||
+    !Number.isFinite(quickSale.rate) ||
+    quickSale.quantity <= 0 ||
+    quickSale.rate <= 0
+  ) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Quantity and Rate must be Valid Positive Numbers!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
   // ALWAYS RECOMPUTE TOTAL FROM FINAL QUANTITY AND RATE — CONSISTENT WITH addQuickSale
   quickSale.total = parseFloat(
     (quickSale.quantity * quickSale.rate).toFixed(2),
@@ -284,20 +317,21 @@ export const updateQuickSale = expressAsyncHandler(async (req, res) => {
 
 /**
  * DELETE A QUICK SALE RECORD
- * VERIFIES OWNERSHIP BEFORE DELETING
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
  */
 // <== DELETE QUICK SALE ==>
 export const deleteQuickSale = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING QUICK SALE ID FROM REQUEST PARAMS
   const { id } = req.params;
-  // FINDING QUICK SALE AND VERIFYING OWNERSHIP
-  const quickSale = await QuickSale.findOne({ _id: id, userId }).lean().exec();
-  // IF QUICK SALE NOT FOUND
+  // FINDING AND DELETING IN A SINGLE ATOMIC ROUND TRIP
+  const quickSale = await QuickSale.findOneAndDelete({ _id: id, accountId })
+    .lean()
+    .exec();
+  // IF QUICK SALE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!quickSale) {
     // RETURNING NOT FOUND RESPONSE
     res
@@ -306,8 +340,6 @@ export const deleteQuickSale = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // DELETING QUICK SALE RECORD
-  await QuickSale.deleteOne({ _id: id });
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
     message: "Quick Sale Record Deleted Successfully!",
