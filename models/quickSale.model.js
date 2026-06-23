@@ -4,12 +4,18 @@ import mongoose from "mongoose";
 // <== QUICK SALE SCHEMA ==>
 const quickSaleSchema = new mongoose.Schema(
   {
-    // USER ID FIELD (OWNER OF THIS QUICK SALE RECORD)
-    userId: {
+    // ACCOUNT ID FIELD (TENANT THIS QUICK SALE RECORD BELONGS TO — SHARED ACROSS THE WHOLE TEAM)
+    accountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Account",
+      required: true,
+      index: true,
+    },
+    // PERFORMED BY FIELD (THE USER WHO CREATED THIS RECORD — FOR ATTRIBUTION, NOT OWNERSHIP)
+    performedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
     },
     // TYPE FIELD — MILK OR YOGHURT
     type: {
@@ -53,20 +59,20 @@ const quickSaleSchema = new mongoose.Schema(
 
 // <== INDEXES ==>
 /**
- * COMPOUND INDEX FOR USER AND DATE — PRIMARY QUERY AND SORT PATTERN
+ * COMPOUND INDEX FOR ACCOUNT AND DATE — PRIMARY QUERY AND SORT PATTERN
  */
-// <== COMPOUND INDEX FOR USER AND DATE ==>
-quickSaleSchema.index({ userId: 1, date: -1 });
+// <== COMPOUND INDEX FOR ACCOUNT AND DATE ==>
+quickSaleSchema.index({ accountId: 1, date: -1 });
 /**
- * COMPOUND INDEX FOR USER, TYPE, AND DATE — PRODUCT FILTER QUERIES
+ * COMPOUND INDEX FOR ACCOUNT, TYPE, AND DATE — PRODUCT FILTER QUERIES
  */
-// <== COMPOUND INDEX FOR USER, TYPE, AND DATE ==>
-quickSaleSchema.index({ userId: 1, type: 1, date: -1 });
+// <== COMPOUND INDEX FOR ACCOUNT, TYPE, AND DATE ==>
+quickSaleSchema.index({ accountId: 1, type: 1, date: -1 });
 /**
- * COMPOUND INDEX FOR USER, DATE RANGE, AND TYPE — AGGREGATION QUERIES
+ * COMPOUND INDEX FOR ACCOUNT, DATE RANGE, AND TYPE — AGGREGATION QUERIES
  */
-// <== COMPOUND INDEX FOR USER, DATE RANGE, AND TYPE ==>
-quickSaleSchema.index({ userId: 1, date: 1, type: 1 });
+// <== COMPOUND INDEX FOR ACCOUNT, DATE RANGE, AND TYPE ==>
+quickSaleSchema.index({ accountId: 1, date: 1, type: 1 });
 
 // <== EXPORTING THE QUICK SALE MODEL ==>
 export const QuickSale = mongoose.model("QuickSale", quickSaleSchema);
