@@ -10,10 +10,10 @@ const staffMonthRecordSchema = new mongoose.Schema(
       ref: "StaffMember",
       required: true,
     },
-    // USER ID FIELD (OWNER OF THIS RECORD)
-    userId: {
+    // ACCOUNT ID FIELD (TENANT THIS RECORD BELONGS TO — ENABLES ACCOUNT-SCOPED QUERIES WITHOUT STAFF LOOKUP)
+    accountId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      ref: "Account",
       required: true,
     },
     // MONTH FIELD (YYYY-MM FORMAT)
@@ -51,15 +51,15 @@ const staffMonthRecordSchema = new mongoose.Schema(
 // <== UNIQUE COMPOUND INDEX FOR STAFF AND MONTH ==>
 staffMonthRecordSchema.index({ staffId: 1, month: 1 }, { unique: true });
 /**
- * COMPOUND INDEX FOR USER AND MONTH QUERIES
+ * COMPOUND INDEX FOR ACCOUNT AND MONTH QUERIES
  */
-// <== COMPOUND INDEX FOR USER AND MONTH QUERIES ==>
-staffMonthRecordSchema.index({ userId: 1, month: 1 });
+// <== COMPOUND INDEX FOR ACCOUNT AND MONTH QUERIES ==>
+staffMonthRecordSchema.index({ accountId: 1, month: 1 });
 /**
- * COMPOUND INDEX FOR USER, STAFF, AND MONTH COMBINATION
+ * COMPOUND INDEX FOR ACCOUNT, STAFF, AND MONTH COMBINATION
  */
-// <== COMPOUND INDEX FOR USER, STAFF, AND MONTH COMBINATION ==>
-staffMonthRecordSchema.index({ userId: 1, staffId: 1, month: 1 });
+// <== COMPOUND INDEX FOR ACCOUNT, STAFF, AND MONTH COMBINATION ==>
+staffMonthRecordSchema.index({ accountId: 1, staffId: 1, month: 1 });
 
 // <== EXPORTING THE STAFF MONTH RECORD MODEL ==>
 export const StaffMonthRecord = mongoose.model(
