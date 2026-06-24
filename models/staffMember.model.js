@@ -4,12 +4,18 @@ import mongoose from "mongoose";
 // <== STAFF MEMBER SCHEMA ==>
 const staffMemberSchema = new mongoose.Schema(
   {
-    // USER ID FIELD (OWNER OF THIS STAFF RECORD)
-    userId: {
+    // ACCOUNT ID FIELD (TENANT THIS STAFF RECORD BELONGS TO — SHARED ACROSS THE WHOLE TEAM)
+    accountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Account",
+      required: true,
+      index: true,
+    },
+    // PERFORMED BY FIELD (THE USER WHO CREATED THIS STAFF RECORD — FOR ATTRIBUTION)
+    performedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-      index: true,
     },
     // NAME FIELD
     name: {
@@ -35,15 +41,15 @@ const staffMemberSchema = new mongoose.Schema(
 
 // <== INDEXES ==>
 /**
- * COMPOUND INDEX FOR USER AND NAME QUERIES
+ * COMPOUND INDEX FOR ACCOUNT AND NAME QUERIES
  */
-// <== COMPOUND INDEX FOR USER AND NAME QUERIES ==>
-staffMemberSchema.index({ userId: 1, name: 1 });
+// <== COMPOUND INDEX FOR ACCOUNT AND NAME QUERIES ==>
+staffMemberSchema.index({ accountId: 1, name: 1 });
 /**
- * COMPOUND INDEX FOR USER AND CREATION DATE SORTING
+ * COMPOUND INDEX FOR ACCOUNT AND CREATION DATE SORTING
  */
-// <== COMPOUND INDEX FOR USER AND CREATION DATE SORTING ==>
-staffMemberSchema.index({ userId: 1, createdAt: -1 });
+// <== COMPOUND INDEX FOR ACCOUNT AND CREATION DATE SORTING ==>
+staffMemberSchema.index({ accountId: 1, createdAt: -1 });
 
 // <== EXPORTING THE STAFF MEMBER MODEL ==>
 export const StaffMember = mongoose.model("StaffMember", staffMemberSchema);
