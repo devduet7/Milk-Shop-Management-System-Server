@@ -10,8 +10,14 @@ const staffExtraAllocationSchema = new mongoose.Schema(
       ref: "StaffMember",
       required: true,
     },
-    // USER ID FIELD (OWNER OF THIS RECORD)
-    userId: {
+    // ACCOUNT ID FIELD (TENANT THIS RECORD BELONGS TO — ENABLES ACCOUNT-SCOPED QUERIES WITHOUT STAFF LOOKUP)
+    accountId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Account",
+      required: true,
+    },
+    // PERFORMED BY FIELD (THE USER WHO RECORDED THIS ALLOCATION — FOR ATTRIBUTION)
+    performedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
@@ -51,10 +57,10 @@ const staffExtraAllocationSchema = new mongoose.Schema(
 // <== COMPOUND INDEX FOR STAFF AND MONTH QUERIES ==>
 staffExtraAllocationSchema.index({ staffId: 1, month: 1 });
 /**
- * COMPOUND INDEX FOR USER AND MONTH QUERIES
+ * COMPOUND INDEX FOR ACCOUNT AND MONTH QUERIES
  */
-// <== COMPOUND INDEX FOR USER AND MONTH QUERIES ==>
-staffExtraAllocationSchema.index({ userId: 1, month: 1 });
+// <== COMPOUND INDEX FOR ACCOUNT AND MONTH QUERIES ==>
+staffExtraAllocationSchema.index({ accountId: 1, month: 1 });
 /**
  * COMPOUND INDEX FOR STAFF AND DATE SORTING WITHIN A MONTH
  */

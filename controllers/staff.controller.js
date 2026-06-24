@@ -30,8 +30,8 @@ const getTodayDateStr = () => {
  */
 // <== GET STAFF ==>
 export const getStaff = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING MONTH STRING (DEFAULTS TO CURRENT MONTH)
   const monthStr = req.query.month || getCurrentMonthStr();
   // GETTING SEARCH QUERY
@@ -42,10 +42,10 @@ export const getStaff = expressAsyncHandler(async (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 10));
   // CALCULATING SKIP
   const skip = (page - 1) * limit;
-  // USER OBJECT ID FOR AGGREGATION QUERIES
-  const userObjectId = new mongoose.Types.ObjectId(userId);
+  // CONVERTING ACCOUNT ID TO OBJECT ID FOR AGGREGATION PIPELINE USE
+  const accountObjectId = new mongoose.Types.ObjectId(accountId);
   // BUILDING SEARCH MATCH QUERY FOR STAFF MEMBERS
-  const matchQuery = { userId };
+  const matchQuery = { accountId };
   // APPLYING NAME SEARCH IF PROVIDED
   if (search) matchQuery.name = { $regex: search, $options: "i" };
   // FETCHING COUNT, PAGINATED STAFF, OVERALL SALARY STATS, AND MONTH STATS IN PARALLEL
@@ -60,9 +60,9 @@ export const getStaff = expressAsyncHandler(async (req, res) => {
         .limit(limit)
         .lean()
         .exec(),
-      // OVERALL STATS — ALL STAFF REGARDLESS OF SEARCH (TOTAL SALARY BILL)
+      // OVERALL STATS — ALL STAFF REGARDLESS OF SEARCH (TOTAL SALARY BILL FOR THE ACCOUNT)
       StaffMember.aggregate([
-        { $match: { userId: userObjectId } },
+        { $match: { accountId: accountObjectId } },
         {
           $group: {
             _id: null,
@@ -73,7 +73,7 @@ export const getStaff = expressAsyncHandler(async (req, res) => {
       ]),
       // MONTH STATS — SALARY PAYMENTS AND EXTRA FOR THE SELECTED MONTH
       StaffMonthRecord.aggregate([
-        { $match: { userId: userObjectId, month: monthStr } },
+        { $match: { accountId: accountObjectId, month: monthStr } },
         {
           $group: {
             _id: null,
@@ -178,15 +178,28 @@ export const getStaff = expressAsyncHandler(async (req, res) => {
  */
 // <== ADD STAFF ==>
 export const addStaff = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING STAFF DATA FROM REQUEST BODY
   const { name, monthlySalary, note } = req.body;
   // PARSING MONTHLY SALARY AS FLOAT
   const parsedSalary = parseFloat(monthlySalary);
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES
+  if (!Number.isFinite(parsedSalary) || parsedSalary <= 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Monthly Salary must be a Valid Positive Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
   // CREATING STAFF MEMBER IN DATABASE
   const staffMember = await StaffMember.create({
-    userId,
+    accountId,
+    performedBy,
     name: name.trim(),
     monthlySalary: parsedSalary,
     note: note?.trim() || null,
@@ -210,15 +223,15 @@ export const addStaff = expressAsyncHandler(async (req, res) => {
  */
 // <== UPDATE STAFF ==>
 export const updateStaff = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING STAFF MEMBER ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING UPDATE DATA FROM REQUEST BODY
   const { name, monthlySalary, note } = req.body;
-  // FINDING STAFF MEMBER AND VERIFYING OWNERSHIP
-  const staffMember = await StaffMember.findOne({ _id: id, userId });
-  // IF STAFF MEMBER NOT FOUND
+  // FINDING STAFF MEMBER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const staffMember = await StaffMember.findOne({ _id: id, accountId }).exec();
+  // IF STAFF MEMBER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!staffMember) {
     // RETURNING NOT FOUND RESPONSE
     res
@@ -229,9 +242,23 @@ export const updateStaff = expressAsyncHandler(async (req, res) => {
   }
   // IF NAME IS PRESENT, TRIM AND UPDATE
   if (name !== undefined) staffMember.name = name.trim();
-  // IF MONTHLY SALARY IS PRESENT, PARSE AS FLOAT AND UPDATE
-  if (monthlySalary !== undefined)
-    staffMember.monthlySalary = parseFloat(monthlySalary);
+  // IF MONTHLY SALARY IS PRESENT, VALIDATE AND UPDATE
+  if (monthlySalary !== undefined) {
+    // PARSING MONTHLY SALARY AS FLOAT
+    const parsedSalary = parseFloat(monthlySalary);
+    // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES (DEFENSE IN DEPTH)
+    if (!Number.isFinite(parsedSalary) || parsedSalary <= 0) {
+      // RETURNING ERROR RESPONSE
+      res.status(400).json({
+        message: "Monthly Salary must be a Valid Positive Number!",
+        success: false,
+      });
+      // RETURNING FROM FUNCTION
+      return;
+    }
+    // APPLYING PARSED SALARY
+    staffMember.monthlySalary = parsedSalary;
+  }
   // IF NOTE IS PRESENT, TRIM AND UPDATE (ALLOWING NULL)
   if (note !== undefined) staffMember.note = note?.trim() || null;
   // SAVING UPDATED STAFF MEMBER
@@ -254,15 +281,15 @@ export const updateStaff = expressAsyncHandler(async (req, res) => {
  */
 // <== DELETE STAFF ==>
 export const deleteStaff = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING STAFF MEMBER ID FROM REQUEST PARAMS
   const { id } = req.params;
-  // FINDING STAFF MEMBER AND VERIFYING OWNERSHIP
-  const staffMember = await StaffMember.findOne({ _id: id, userId })
+  // FINDING STAFF MEMBER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const staffMember = await StaffMember.findOne({ _id: id, accountId })
     .lean()
     .exec();
-  // IF STAFF MEMBER NOT FOUND
+  // IF STAFF MEMBER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!staffMember) {
     // RETURNING NOT FOUND RESPONSE
     res
@@ -273,8 +300,8 @@ export const deleteStaff = expressAsyncHandler(async (req, res) => {
   }
   // DELETING STAFF MEMBER AND ALL RELATED RECORDS IN PARALLEL
   await Promise.all([
-    // DELETE STAFF MEMBER DOCUMENT
-    StaffMember.deleteOne({ _id: id }),
+    // DELETE STAFF MEMBER DOCUMENT WITH ACCOUNT SCOPING FOR DEFENSE IN DEPTH
+    StaffMember.deleteOne({ _id: id, accountId }),
     // CASCADE DELETE ALL MONTH RECORDS FOR THIS STAFF MEMBER
     StaffMonthRecord.deleteMany({ staffId: id }),
     // CASCADE DELETE ALL EXTRA ALLOCATIONS FOR THIS STAFF MEMBER
@@ -299,17 +326,30 @@ export const deleteStaff = expressAsyncHandler(async (req, res) => {
  */
 // <== PAY SALARY ==>
 export const paySalary = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING STAFF MEMBER ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING PAYMENT DATA FROM REQUEST BODY
   const { month, amount } = req.body;
-  // FINDING STAFF MEMBER AND VERIFYING OWNERSHIP
-  const staffMember = await StaffMember.findOne({ _id: id, userId })
-    .lean()
-    .exec();
-  // IF STAFF MEMBER NOT FOUND
+  // PARSING AMOUNT AS FLOAT
+  const parsedAmount = parseFloat(amount);
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Payment Amount must be a Valid Positive Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // FETCHING STAFF MEMBER AND EXISTING MONTH RECORD IN PARALLEL
+  const [staffMember, existingRecord] = await Promise.all([
+    StaffMember.findOne({ _id: id, accountId }).lean().exec(),
+    StaffMonthRecord.findOne({ staffId: id, month }).lean().exec(),
+  ]);
+  // IF STAFF MEMBER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!staffMember) {
     // RETURNING NOT FOUND RESPONSE
     res
@@ -318,17 +358,8 @@ export const paySalary = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // PARSING AMOUNT AS FLOAT
-  const parsedAmount = parseFloat(amount);
   // GETTING MONTHLY SALARY FROM STAFF MEMBER
   const monthlySalary = staffMember.monthlySalary;
-  // FETCHING EXISTING MONTH RECORD FOR THIS STAFF MEMBER AND MONTH
-  const existingRecord = await StaffMonthRecord.findOne({
-    staffId: id,
-    month,
-  })
-    .lean()
-    .exec();
   // EXTRACTING EXISTING PAID AMOUNT WITH FALLBACK TO ZERO
   const existingPaid = existingRecord?.paidAmount ?? 0;
   // GUARD: BLOCK PAYMENT IF SALARY IS ALREADY FULLY CLEARED
@@ -371,9 +402,12 @@ export const paySalary = expressAsyncHandler(async (req, res) => {
   const newStatus = newPaidAmount >= monthlySalary ? "cleared" : "pending";
   // UPSERTING MONTH RECORD WITH NEW PAID AMOUNT AND STATUS
   const updatedRecord = await StaffMonthRecord.findOneAndUpdate(
-    { staffId: id, userId, month },
+    // FILTER: FIND EXISTING RECORD FOR THIS STAFF MEMBER AND MONTH
+    { staffId: id, accountId, month },
     {
+      // UPDATE: SET NEW PAID AMOUNT AND STATUS
       $set: { paidAmount: newPaidAmount, status: newStatus },
+      // ON INSERT: INITIALISE EXTRA ALLOCATED TO ZERO FOR NEW RECORDS
       $setOnInsert: { totalExtraAllocated: 0 },
     },
     { upsert: true, new: true },
@@ -407,17 +441,19 @@ export const paySalary = expressAsyncHandler(async (req, res) => {
  */
 // <== ADD EXTRA ALLOCATION ==>
 export const addExtraAllocation = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING STAFF MEMBER ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING ALLOCATION DATA FROM REQUEST BODY
   const { month, date, amount, note } = req.body;
-  // FINDING STAFF MEMBER AND VERIFYING OWNERSHIP
-  const staffMember = await StaffMember.findOne({ _id: id, userId })
+  // FINDING STAFF MEMBER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const staffMember = await StaffMember.findOne({ _id: id, accountId })
     .lean()
     .exec();
-  // IF STAFF MEMBER NOT FOUND
+  // IF STAFF MEMBER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!staffMember) {
     // RETURNING NOT FOUND RESPONSE
     res
@@ -428,14 +464,25 @@ export const addExtraAllocation = expressAsyncHandler(async (req, res) => {
   }
   // PARSING AMOUNT AS FLOAT
   const parsedAmount = parseFloat(amount);
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Amount must be a Valid Positive Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
   // RESOLVING DATE — DEFAULTS TO TODAY IF NOT PROVIDED
   const resolvedDate = date?.trim() || getTodayDateStr();
   // CREATING EXTRA ALLOCATION RECORD AND UPSERTING MONTH RECORD IN PARALLEL
   const [allocation] = await Promise.all([
-    // CREATE INDIVIDUAL EXTRA ALLOCATION RECORD
+    // CREATE INDIVIDUAL EXTRA ALLOCATION RECORD WITH ACCOUNT AND ATTRIBUTION FIELDS
     StaffExtraAllocation.create({
       staffId: id,
-      userId,
+      accountId,
+      performedBy,
       month,
       date: resolvedDate,
       amount: parsedAmount,
@@ -443,9 +490,12 @@ export const addExtraAllocation = expressAsyncHandler(async (req, res) => {
     }),
     // INCREMENT TOTAL EXTRA ALLOCATED ON THE MONTH RECORD (UPSERT IF NOT EXISTS)
     StaffMonthRecord.findOneAndUpdate(
-      { staffId: id, userId, month },
+      // FILTER: FIND EXISTING MONTH RECORD FOR THIS STAFF MEMBER AND MONTH
+      { staffId: id, accountId, month },
       {
+        // INCREMENT TOTAL EXTRA ALLOCATED
         $inc: { totalExtraAllocated: parsedAmount },
+        // ON INSERT: INITIALISE PAID AMOUNT AND STATUS FOR NEW RECORDS
         $setOnInsert: { paidAmount: 0, status: "pending" },
       },
       { upsert: true, new: true },
@@ -470,18 +520,18 @@ export const addExtraAllocation = expressAsyncHandler(async (req, res) => {
  */
 // <== GET EXTRA ALLOCATIONS ==>
 export const getExtraAllocations = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING STAFF MEMBER ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING MONTH STRING (DEFAULTS TO CURRENT MONTH)
   const monthStr = req.query.month || getCurrentMonthStr();
-  // FINDING STAFF MEMBER AND VERIFYING OWNERSHIP
-  const staffMember = await StaffMember.findOne({ _id: id, userId })
+  // FINDING STAFF MEMBER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const staffMember = await StaffMember.findOne({ _id: id, accountId })
     .select("name _id")
     .lean()
     .exec();
-  // IF STAFF MEMBER NOT FOUND
+  // IF STAFF MEMBER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!staffMember) {
     // RETURNING NOT FOUND RESPONSE
     res

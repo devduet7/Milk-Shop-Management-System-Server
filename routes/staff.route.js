@@ -18,6 +18,7 @@ import {
   getExtraAllocations,
 } from "../controllers/staff.controller.js";
 import express from "express";
+import { requireRole } from "../middleware/authorize.js";
 import isAuthenticated from "../middleware/isAuthenticated.js";
 
 // <== ROUTER ==>
@@ -25,6 +26,9 @@ const router = express.Router();
 
 // <== APPLYING AUTHENTICATION MIDDLEWARE TO ALL ROUTES ==>
 router.use(isAuthenticated);
+
+// <== APPLYING ROLE GATE AT ROUTER LEVEL ==>
+router.use(requireRole("superadmin", "admin"));
 
 // <== ROUTES ==>
 // GET ALL STAFF MEMBERS WITH MONTH SALARY STATUS AND STATS
