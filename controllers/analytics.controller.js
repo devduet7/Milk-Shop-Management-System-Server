@@ -79,14 +79,14 @@ const ALL_CATEGORIES = ["supplies", "meals", "transport", "misc"];
  */
 // <== GET ANALYTICS DATA ==>
 export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING MONTH STRING — DEFAULTS TO CURRENT MONTH
   const monthStr = req.query.month || getCurrentMonthStr();
   // GETTING DATE RANGE AND TOTAL DAYS FOR SELECTED MONTH
   const { startDate, endDate, totalDays } = getMonthDateRange(monthStr);
-  // USER OBJECT ID FOR AGGREGATION QUERIES
-  const userObjectId = new mongoose.Types.ObjectId(userId);
+  // CONVERTING ACCOUNT ID TO OBJECT ID FOR AGGREGATION PIPELINE USE
+  const accountObjectId = new mongoose.Types.ObjectId(accountId);
   // GENERATING ALL DAYS FOR THE MONTH — USED TO FILL MISSING DAYS WITH ZEROS
   const allDays = getAllDaysInMonth(monthStr);
   // RUNNING ALL 13 AGGREGATIONS IN PARALLEL
@@ -109,7 +109,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     Sale.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -119,7 +119,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     QuickSale.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -135,7 +135,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     Purchase.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -151,7 +151,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     Expenditure.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -161,7 +161,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     DeliveryRecord.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -186,7 +186,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     Sale.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -203,7 +203,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     QuickSale.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -220,7 +220,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     Expenditure.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -233,12 +233,12 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
       },
     ]),
     // 9. ALL STAFF MEMBERS — NO LIMIT, ANALYTICS NEEDS FULL PAYROLL PICTURE
-    StaffMember.find({ userId }).sort({ name: 1 }).lean().exec(),
+    StaffMember.find({ accountId }).sort({ name: 1 }).lean().exec(),
     // 10. STAFF MONTH RECORDS FOR THE SELECTED MONTH
-    StaffMonthRecord.find({ userId, month: monthStr }).lean().exec(),
+    StaffMonthRecord.find({ accountId, month: monthStr }).lean().exec(),
     // 11. ALL-TIME CUSTOMER SALES OUTSTANDING
     Sale.aggregate([
-      { $match: { userId: userObjectId, saleType: "customer" } },
+      { $match: { accountId: accountObjectId, saleType: "customer" } },
       {
         $group: {
           _id: null,
@@ -250,7 +250,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     ]),
     // 12. ALL-TIME DELIVERY BILLING DUE — JOINS DELIVERY RECORDS WITH CUSTOMERS
     DeliveryRecord.aggregate([
-      { $match: { userId: userObjectId, status: "delivered" } },
+      { $match: { accountId: accountObjectId, status: "delivered" } },
       { $group: { _id: "$customerId", totalMilk: { $sum: "$milkQuantity" } } },
       {
         $lookup: {
@@ -276,7 +276,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     ]),
     // 13. ALL-TIME DELIVERY PAYMENTS RECEIVED
     Payment.aggregate([
-      { $match: { userId: userObjectId } },
+      { $match: { accountId: accountObjectId } },
       { $group: { _id: null, totalPaid: { $sum: "$amount" } } },
     ]),
   ]);
@@ -287,7 +287,6 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     // IF DAILY MAP DOES NOT EXIST, CREATE IT
     salesDailyMap[_id] = revenue;
   });
-
   // QUICK SALES DAILY MAP
   const qsDailyMap = {};
   // QUICK SALES TOTAL DAILY MAP
@@ -411,11 +410,8 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     customerMilk: sbMap["customer_milk"] || { total: 0, qty: 0, count: 0 },
     // CUSTOMER YOGHURT
     customerYoghurt: sbMap["customer_yoghurt"] || {
-      // SALES BREAKDOWN
       total: 0,
-      // QUANTITY
       qty: 0,
-      // COUNT
       count: 0,
     },
     // SHOP MILK
@@ -444,7 +440,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     // POPULATE EXPENDITURES BY CATEGORY
     expCatMap[_id] = { amount: sf(amount), count };
   });
-  // EXPENDITURES BY CATEGORY
+  // COMPUTING EXPENDITURES CATEGORY TOTAL FOR PERCENTAGE CALCULATION
   const expCatTotal = expByCategoryAgg.reduce(
     (sum, e) => sum + (e.amount || 0),
     0,
@@ -467,7 +463,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
   }));
   // STAFF PAYROLL — MERGE STAFF MEMBERS WITH THEIR MONTH RECORDS
   const mrMap = {};
-  // LOOP THROUGH STAFF MEMBERS
+  // LOOP THROUGH STAFF MONTH RECORDS
   staffMonthRecordsRaw.forEach((r) => {
     // POPULATE MONTH RECORD MAP
     mrMap[r.staffId.toString()] = r;
@@ -507,15 +503,15 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
   const totalPurchaseCost = sf(
     dailyPurchasesAgg.reduce((sum, d) => sum + (d.cost || 0), 0),
   );
-  // TOTAL EXPENSES AMOUNT
+  // TOTAL EXPENDITURES AMOUNT
   const totalExpenditureAmount = sf(
     expByCategoryAgg.reduce((sum, e) => sum + (e.amount || 0), 0),
   );
-  // TOTAL STAFF OUTGO
+  // TOTAL STAFF SALARY BILL
   const totalStaffBill = sf(
     staffMembersRaw.reduce((sum, s) => sum + s.monthlySalary, 0),
   );
-  // TOTAL STAFF EXTRA
+  // TOTAL STAFF EXTRA ALLOCATED
   const totalStaffExtra = sf(
     staffMonthRecordsRaw.reduce(
       (sum, r) => sum + (r.totalExtraAllocated || 0),
@@ -536,9 +532,9 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
   const salesOutstandingRaw = salesOutstandingAgg[0] || {};
   // COMPUTING SALES OUTSTANDING
   const salesOutstanding = sf(salesOutstandingRaw.outstanding || 0);
-  // COMPUTING DELIVERY OUTSTANDING
+  // COMPUTING ALL-TIME DELIVERY BILLING DUE
   const allTimeDelivDue = sf(allTimeDelivBillingAgg[0]?.allTimeDue || 0);
-  // COMPUTING PAYMENTS PAID
+  // COMPUTING ALL-TIME PAYMENTS PAID
   const allTimePaymentsPaid = sf(allTimePaymentsAgg[0]?.totalPaid || 0);
   // COMPUTING DELIVERY OUTSTANDING
   const deliveryOutstanding = sf(
@@ -546,9 +542,9 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
   );
   // COMPUTING TOTAL OUTSTANDING
   const totalOutstanding = sf(salesOutstanding + deliveryOutstanding);
-  // COMPUTING TOTAL ALL TIME DUE
+  // COMPUTING TOTAL ALL-TIME DUE
   const totalAllTimeDue = sf((salesOutstandingRaw.due || 0) + allTimeDelivDue);
-  // COMPUTING TOTAL ALL TIME PAID
+  // COMPUTING TOTAL ALL-TIME PAID
   const totalAllTimePaid = sf(
     (salesOutstandingRaw.paid || 0) + allTimePaymentsPaid,
   );
