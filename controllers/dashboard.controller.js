@@ -46,14 +46,14 @@ const sf = (n, d = 2) => parseFloat((n ?? 0).toFixed(d));
  */
 // <== GET DASHBOARD SUMMARY ==>
 export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING MONTH STRING (DEFAULTS TO CURRENT MONTH)
   const monthStr = req.query.month || getCurrentMonthStr();
   // GETTING DATE RANGE FOR SELECTED MONTH
   const { startDate, endDate } = getMonthDateRange(monthStr);
-  // USER OBJECT ID FOR AGGREGATION QUERIES
-  const userObjectId = new mongoose.Types.ObjectId(userId);
+  // CONVERTING ACCOUNT ID TO OBJECT ID FOR AGGREGATION PIPELINE USE
+  const accountObjectId = new mongoose.Types.ObjectId(accountId);
   // RUNNING ALL 13 AGGREGATIONS IN PARALLEL — NO SEQUENTIAL ROUND TRIPS
   const [
     salesAgg,
@@ -74,7 +74,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     Sale.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -93,7 +93,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     QuickSale.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -110,7 +110,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     Purchase.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -127,7 +127,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     Expenditure.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -143,7 +143,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     DeliveryRecord.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -159,7 +159,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     DeliveryRecord.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
           status: "delivered",
         },
@@ -192,12 +192,12 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     ]),
     // 7. PAYMENTS RECEIVED FOR THIS BILLING MONTH
     Payment.aggregate([
-      { $match: { userId: userObjectId, billingMonth: monthStr } },
+      { $match: { accountId: accountObjectId, billingMonth: monthStr } },
       { $group: { _id: null, totalPaid: { $sum: "$amount" } } },
     ]),
     // 8. ALL STAFF COUNT AND TOTAL SALARY BILL
     StaffMember.aggregate([
-      { $match: { userId: userObjectId } },
+      { $match: { accountId: accountObjectId } },
       {
         $group: {
           _id: null,
@@ -208,7 +208,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     ]),
     // 9. STAFF MONTH PAYMENT STATUS FOR THE SELECTED MONTH
     StaffMonthRecord.aggregate([
-      { $match: { userId: userObjectId, month: monthStr } },
+      { $match: { accountId: accountObjectId, month: monthStr } },
       {
         $group: {
           _id: null,
@@ -223,10 +223,10 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
       },
     ]),
     // 10. TOTAL CUSTOMER COUNT
-    Customer.countDocuments({ userId }),
+    Customer.countDocuments({ accountId }),
     // 11. ALL-TIME CUSTOMER SALES OUTSTANDING
     Sale.aggregate([
-      { $match: { userId: userObjectId, saleType: "customer" } },
+      { $match: { accountId: accountObjectId, saleType: "customer" } },
       {
         $group: {
           _id: null,
@@ -238,7 +238,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     ]),
     // 12. ALL-TIME DELIVERY BILLING DUE (JOINS DELIVERY RECORDS WITH CUSTOMERS)
     DeliveryRecord.aggregate([
-      { $match: { userId: userObjectId, status: "delivered" } },
+      { $match: { accountId: accountObjectId, status: "delivered" } },
       { $group: { _id: "$customerId", totalMilk: { $sum: "$milkQuantity" } } },
       {
         $lookup: {
@@ -267,7 +267,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     ]),
     // 13. ALL-TIME DELIVERY PAYMENTS RECEIVED
     Payment.aggregate([
-      { $match: { userId: userObjectId } },
+      { $match: { accountId: accountObjectId } },
       { $group: { _id: null, totalPaid: { $sum: "$amount" } } },
     ]),
   ]);
@@ -392,7 +392,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
   const monthlyBillingPending = sf(
     Math.max(0, monthlyBillingDue - monthlyBillingPaid),
   );
-  // BUILDING DELIVERIES AGGREGATE
+  // COMPUTING TOTAL DELIVERY DAYS FOR RATE CALCULATION
   const totalDeliveryDays = deliveredStats.count + missedStats.count;
   // COMPUTING THE DELIVERY RATE
   const deliveryRate =
@@ -441,9 +441,9 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
   const salesOutRaw = salesOutstandingAgg[0] || {};
   // COMPUTING THE SALES OUTSTANDING
   const salesOutstanding = sf(salesOutRaw.totalOutstanding);
-  // COMPUTING THE DELIVERY OUTSTANDING
+  // COMPUTING THE ALL-TIME DELIVERY BILLING DUE
   const allTimeDeliveryDue = sf(allTimeDeliveryBillingAgg[0]?.allTimeDue || 0);
-  // COMPUTING THE PAYMENTS PAID
+  // COMPUTING THE ALL-TIME PAYMENTS PAID
   const allTimePaymentsPaid = sf(allTimePaymentsAgg[0]?.totalPaid || 0);
   // COMPUTING THE DELIVERY OUTSTANDING
   const deliveryOutstanding = sf(
@@ -451,9 +451,9 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
   );
   // COMPUTING THE TOTAL OUTSTANDING
   const totalOutstanding = sf(salesOutstanding + deliveryOutstanding);
-  // COMPUTING THE ALL TIME DUE
+  // COMPUTING THE ALL-TIME DUE
   const totalAllTimeDue = sf((salesOutRaw.totalDue || 0) + allTimeDeliveryDue);
-  // COMPUTING THE ALL TIME PAID
+  // COMPUTING THE ALL-TIME PAID
   const totalAllTimePaid = sf(
     (salesOutRaw.totalPaid || 0) + allTimePaymentsPaid,
   );
@@ -512,8 +512,8 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
  */
 // <== GET DASHBOARD SALES ==>
 export const getDashboardSales = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING MONTH STRING
   const monthStr = req.query.month || getCurrentMonthStr();
   // GETTING DATE RANGE FOR SELECTED MONTH
@@ -526,9 +526,9 @@ export const getDashboardSales = expressAsyncHandler(async (req, res) => {
   const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 10));
   // CALCULATING SKIP
   const skip = (page - 1) * limit;
-  // BUILDING MATCH QUERY
+  // BUILDING MATCH QUERY SCOPED TO THIS ACCOUNT
   const matchQuery = {
-    userId: new mongoose.Types.ObjectId(userId),
+    accountId: new mongoose.Types.ObjectId(accountId),
     date: { $gte: startDate, $lte: endDate },
   };
   // APPLYING SALE TYPE FILTER IF NOT ALL
@@ -572,8 +572,8 @@ export const getDashboardSales = expressAsyncHandler(async (req, res) => {
  */
 // <== GET DASHBOARD QUICK SALES ==>
 export const getDashboardQuickSales = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING MONTH STRING
   const monthStr = req.query.month || getCurrentMonthStr();
   // GETTING DATE RANGE
@@ -586,9 +586,9 @@ export const getDashboardQuickSales = expressAsyncHandler(async (req, res) => {
   const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 10));
   // CALCULATING SKIP NUMBER
   const skip = (page - 1) * limit;
-  // BUILDING MATCH QUERY
+  // BUILDING MATCH QUERY SCOPED TO THIS ACCOUNT
   const matchQuery = {
-    userId: new mongoose.Types.ObjectId(userId),
+    accountId: new mongoose.Types.ObjectId(accountId),
     date: { $gte: startDate, $lte: endDate },
   };
   // APPLYING PRODUCT TYPE FILTER IF NOT ALL
@@ -631,8 +631,8 @@ export const getDashboardQuickSales = expressAsyncHandler(async (req, res) => {
  */
 // <== GET DASHBOARD PURCHASES ==>
 export const getDashboardPurchases = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING MONTH STRING
   const monthStr = req.query.month || getCurrentMonthStr();
   // GETTING DATE RANGE
@@ -643,9 +643,9 @@ export const getDashboardPurchases = expressAsyncHandler(async (req, res) => {
   const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 10));
   // CALCULATING SKIP NUMBER
   const skip = (page - 1) * limit;
-  // BUILDING MATCH QUERY
+  // BUILDING MATCH QUERY SCOPED TO THIS ACCOUNT
   const matchQuery = {
-    userId: new mongoose.Types.ObjectId(userId),
+    accountId: new mongoose.Types.ObjectId(accountId),
     date: { $gte: startDate, $lte: endDate },
   };
   // RUNNING COUNT AND PAGINATED FETCH IN PARALLEL
@@ -688,8 +688,8 @@ export const getDashboardPurchases = expressAsyncHandler(async (req, res) => {
 // <== GET DASHBOARD EXPENDITURES ==>
 export const getDashboardExpenditures = expressAsyncHandler(
   async (req, res) => {
-    // GETTING USER ID FROM AUTHENTICATED REQUEST
-    const userId = req.id;
+    // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+    const accountId = req.accountId;
     // GETTING MONTH STRING
     const monthStr = req.query.month || getCurrentMonthStr();
     // GETTING DATE RANGE
@@ -702,9 +702,9 @@ export const getDashboardExpenditures = expressAsyncHandler(
     const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 10));
     // CALCULATING SKIP NUMBER
     const skip = (page - 1) * limit;
-    // BUILDING MATCH QUERY
+    // BUILDING MATCH QUERY SCOPED TO THIS ACCOUNT
     const matchQuery = {
-      userId: new mongoose.Types.ObjectId(userId),
+      accountId: new mongoose.Types.ObjectId(accountId),
       date: { $gte: startDate, $lte: endDate },
     };
     // APPLYING CATEGORY FILTER IF NOT ALL
@@ -742,14 +742,15 @@ export const getDashboardExpenditures = expressAsyncHandler(
 
 /**
  * GET PAGINATED STAFF MEMBERS WITH THEIR MONTH SALARY STATUS
+ * GATED TO ADMIN-AND-ABOVE AT THE ROUTE LEVEL — PAYROLL DATA IS ALWAYS RESTRICTED
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
  */
 // <== GET DASHBOARD STAFF ==>
 export const getDashboardStaff = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING MONTH STRING
   const monthStr = req.query.month || getCurrentMonthStr();
   // PARSING THE PAGE NUMBER
@@ -760,8 +761,8 @@ export const getDashboardStaff = expressAsyncHandler(async (req, res) => {
   const skip = (page - 1) * limit;
   // RUNNING COUNT AND PAGINATED STAFF FETCH IN PARALLEL
   const [total, staffMembers] = await Promise.all([
-    StaffMember.countDocuments({ userId }),
-    StaffMember.find({ userId })
+    StaffMember.countDocuments({ accountId }),
+    StaffMember.find({ accountId })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -823,8 +824,8 @@ export const getDashboardStaff = expressAsyncHandler(async (req, res) => {
  */
 // <== GET DASHBOARD CUSTOMERS ==>
 export const getDashboardCustomers = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
-  const userId = req.id;
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
   // GETTING MONTH STRING
   const monthStr = req.query.month || getCurrentMonthStr();
   // GETTING DATE RANGE
@@ -837,8 +838,8 @@ export const getDashboardCustomers = expressAsyncHandler(async (req, res) => {
   const skip = (page - 1) * limit;
   // RUNNING COUNT AND PAGINATED CUSTOMER FETCH IN PARALLEL
   const [total, customers] = await Promise.all([
-    Customer.countDocuments({ userId }),
-    Customer.find({ userId })
+    Customer.countDocuments({ accountId }),
+    Customer.find({ accountId })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -847,7 +848,7 @@ export const getDashboardCustomers = expressAsyncHandler(async (req, res) => {
   ]);
   // EXTRACTING CUSTOMER IDS FOR BATCH QUERIES
   const customerIds = customers.map((c) => c._id);
-  // BATCH FETCHING DELIVERY RECORDS AND PAYMENTS FOR THIS PAGE'S CUSTOMERS
+  // BATCH FETCHING DELIVERY RECORDS AND PAYMENTS FOR THIS PAGE'S CUSTOMERS IN PARALLEL
   const [deliveryRecords, payments] = await Promise.all([
     DeliveryRecord.find({
       customerId: { $in: customerIds },
