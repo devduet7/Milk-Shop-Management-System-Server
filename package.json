@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server",
-    "dev": "nodemon server"
+    "dev": "nodemon server",
+    "create-superadmin": "node scripts/createSuperadmin.js"
   },
   "keywords": [],
   "author": "Ahmed Abbas",
