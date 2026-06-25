@@ -128,46 +128,6 @@ const userSchema = new mongoose.Schema(
       url: { type: String, default: null },
       publicId: { type: String, default: null },
     },
-    // MILK RATE FIELD (PRICE PER LITER IN RUPEES)
-    milkRate: {
-      type: Number,
-      default: 120,
-      min: [1, "Milk Rate must be at least ₨1!"],
-    },
-    // YOGHURT RATE FIELD (PRICE PER KG IN RUPEES)
-    yoghurtRate: {
-      type: Number,
-      default: 180,
-      min: [1, "Yoghurt Rate must be at least ₨1!"],
-    },
-    // DAILY REPORTS ENABLED FLAG
-    dailyReportsEnabled: {
-      type: Boolean,
-      default: false,
-    },
-    // MONTHLY REPORTS ENABLED FLAG
-    monthlyReportsEnabled: {
-      type: Boolean,
-      default: false,
-    },
-    // LAST DAILY REPORT SENT DATE (YYYY-MM-DD) — IDEMPOTENCY GUARD FOR DAILY CRON
-    lastDailyReportSentDate: {
-      type: String,
-      default: null,
-      match: [
-        /^\d{4}-\d{2}-\d{2}$/,
-        "Last Daily Report Sent Date must be in YYYY-MM-DD Format!",
-      ],
-    },
-    // LAST MONTHLY REPORT SENT MONTH (YYYY-MM) — IDEMPOTENCY GUARD FOR MONTHLY CRON
-    lastMonthlyReportSentDate: {
-      type: String,
-      default: null,
-      match: [
-        /^\d{4}-\d{2}$/,
-        "Last Monthly Report Sent Date must be in YYYY-MM Format!",
-      ],
-    },
   },
   { timestamps: true },
 );
