@@ -6,6 +6,7 @@ import {
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { User } from "../models/user.model.js";
+import { Account } from "../models/account.model.js";
 import expressAsyncHandler from "express-async-handler";
 
 // <== HELPER: SET AUTH COOKIES ==>
@@ -94,7 +95,7 @@ export const login = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // CHECKING IF THE USER ACCOUNT HAS BEEN DEACTIVATED
+  // CHECKING IF THE USER ACCOUNT HAS BEEN DEACTIVATED — CHECKED AFTER PASSWORD MATCH SINCE IDENTITY IS ALREADY CONFIRMED
   if (!user.isActive) {
     // RETURNING FORBIDDEN RESPONSE
     res.status(403).json({
@@ -106,7 +107,7 @@ export const login = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // CHECKING IF THE USER HAS COMPLETED ACCOUNT SETUP
+  // CHECKING IF THE USER HAS COMPLETED ACCOUNT SETUP (INVITED USERS MUST SET A PASSWORD FIRST)
   if (!user.hasSetPassword) {
     // RETURNING FORBIDDEN RESPONSE
     res.status(403).json({
@@ -117,6 +118,8 @@ export const login = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
+  // FETCHING ACCOUNT CONFIG TO INCLUDE BUSINESS RATES IN LOGIN RESPONSE
+  const account = await Account.findById(user.accountId).lean().exec();
   // GENERATING ACCESS TOKEN WITH USER IDENTITY, ACCOUNT, ROLE, AND PERMISSIONS
   const accessToken = generateAccessToken({
     userId: user._id.toString(),
@@ -131,7 +134,7 @@ export const login = expressAsyncHandler(async (req, res) => {
   });
   // SETTING AUTH COOKIES ON RESPONSE
   setAuthCookies(res, accessToken, refreshToken);
-  // RETURNING SUCCESS RESPONSE WITH SAFE USER DATA
+  // RETURNING SUCCESS RESPONSE WITH SAFE USER DATA AND ACCOUNT-LEVEL BUSINESS CONFIG
   res.status(200).json({
     message: "Login Successful!",
     success: true,
@@ -143,6 +146,10 @@ export const login = expressAsyncHandler(async (req, res) => {
       fullName: user.fullName,
       email: user.email,
       phoneNumber: user.phoneNumber,
+      milkRate: account?.milkRate ?? 120,
+      yoghurtRate: account?.yoghurtRate ?? 180,
+      dailyReportsEnabled: account?.dailyReportsEnabled ?? false,
+      monthlyReportsEnabled: account?.monthlyReportsEnabled ?? false,
     },
   });
   return;
@@ -150,8 +157,7 @@ export const login = expressAsyncHandler(async (req, res) => {
 
 /**
  * REFRESH ACCESS TOKEN
- * RE-FETCHES THE USER ON EVERY CALL — THIS IS THE ENFORCEMENT POINT FOR DEACTIVATION, ROLE CHANGES,
- * AND PERMISSION UPDATES TAKING EFFECT WITHOUT REQUIRING THE USER TO LOG OUT AND BACK IN AGAIN
+ * RE-FETCHES THE USER ON EVERY CALL TO ENSURE THE USER IS STILL ACTIVE AND HASN'T BEEN DEACTIVATED OR DELETED
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
@@ -221,7 +227,7 @@ export const refreshToken = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // CHECKING IF THE TOKEN VERSION MATCHES — A MISMATCH MEANS THIS SESSION WAS FORCIBLY REVOKED BY AN ADMIN
+  // CHECKING IF THE TOKEN VERSION MATCHES
   if (decodedToken.tokenVersion !== user.tokenVersion) {
     // RETURNING ERROR RESPONSE
     res.status(401).json({
@@ -244,7 +250,7 @@ export const refreshToken = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // GENERATING NEW ACCESS TOKEN WITH FRESH ACCOUNT, ROLE, AND PERMISSIONS (PICKS UP ANY CHANGES SINCE LAST TOKEN)
+  // GENERATING NEW ACCESS TOKEN WITH FRESH ACCOUNT, ROLE, AND PERMISSIONS
   const newAccessToken = generateAccessToken({
     userId: user._id.toString(),
     accountId: user.accountId.toString(),
