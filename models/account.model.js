@@ -37,6 +37,46 @@ const accountSchema = new mongoose.Schema(
       trim: true,
       maxlength: [300, "Suspended Reason must not exceed 300 Characters!"],
     },
+    // MILK RATE FIELD (PRICE PER LITER IN RUPEES — BUSINESS-WIDE CONFIGURATION, SHARED ACROSS ALL USERS)
+    milkRate: {
+      type: Number,
+      default: 120,
+      min: [1, "Milk Rate must be at least ₨1!"],
+    },
+    // YOGHURT RATE FIELD (PRICE PER KG IN RUPEES — BUSINESS-WIDE CONFIGURATION, SHARED ACROSS ALL USERS)
+    yoghurtRate: {
+      type: Number,
+      default: 180,
+      min: [1, "Yoghurt Rate must be at least ₨1!"],
+    },
+    // DAILY REPORTS ENABLED FLAG — CONTROLS WHETHER AUTOMATED DAILY REPORTS ARE SENT
+    dailyReportsEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    // MONTHLY REPORTS ENABLED FLAG — CONTROLS WHETHER AUTOMATED MONTHLY REPORTS ARE SENT
+    monthlyReportsEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    // LAST DAILY REPORT SENT DATE (YYYY-MM-DD) — IDEMPOTENCY GUARD FOR DAILY CRON
+    lastDailyReportSentDate: {
+      type: String,
+      default: null,
+      match: [
+        /^\d{4}-\d{2}-\d{2}$/,
+        "Last Daily Report Sent Date must be in YYYY-MM-DD Format!",
+      ],
+    },
+    // LAST MONTHLY REPORT SENT MONTH (YYYY-MM) — IDEMPOTENCY GUARD FOR MONTHLY CRON
+    lastMonthlyReportSentDate: {
+      type: String,
+      default: null,
+      match: [
+        /^\d{4}-\d{2}$/,
+        "Last Monthly Report Sent Date must be in YYYY-MM Format!",
+      ],
+    },
   },
   { timestamps: true },
 );

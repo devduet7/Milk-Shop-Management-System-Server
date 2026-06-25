@@ -39,10 +39,12 @@ import multer from "multer";
 import express from "express";
 import { avatarUpload } from "../middleware/multer.js";
 import isAuthenticated from "../middleware/isAuthenticated.js";
+import { requireRole } from "../middleware/authorize.js";
 
 // <== ROUTER ==>
 const router = express.Router();
 
+// <== PUBLIC ROUTES — FORGOT PASSWORD FLOW (NO AUTH REQUIRED) ==>
 // INITIATE FORGOT PASSWORD
 router.post(
   "/forgot-password/initiate",
@@ -68,7 +70,7 @@ router.post(
   cancelForgotPassword,
 );
 
-// <== APPLYING AUTHENTICATION MIDDLEWARE TO ALL ROUTES ==>
+// <== APPLYING AUTHENTICATION MIDDLEWARE TO ALL ROUTES BELOW ==>
 router.use(isAuthenticated);
 
 // <== AVATAR UPLOAD MIDDLEWARE WRAPPER — HANDLES MULTER ERRORS GRACEFULLY ==>
@@ -99,7 +101,7 @@ const handleAvatarUpload = (req, res, next) => {
   });
 };
 
-// <== ROUTES ==>
+// <== ROUTES OPEN TO ALL AUTHENTICATED USERS (PERSONAL PROFILE MANAGEMENT) ==>
 // CANCEL PENDING SECURITY CODE
 router.delete(
   "/security-code/:purpose",
@@ -118,7 +120,7 @@ router.post(
   validateInitiateEmailChange,
   initiateEmailChange,
 );
-// VERIFY CURRENT EMAIL OTP
+// VERIFY CURRENT EMAIL OTP (STEP 1 OF EMAIL CHANGE)
 router.post(
   "/email/verify-current",
   validateVerifyCode,
@@ -140,16 +142,26 @@ router.put("/avatar", handleAvatarUpload, uploadAvatar);
 router.patch("/name", validateUpdateFullName, updateFullName);
 // UPDATE ADDRESS
 router.patch("/address", validateUpdateAddress, updateAddress);
-// UPDATE PRICING
-router.patch("/pricing", validateUpdatePricing, updatePricing);
 // VERIFY PHONE CHANGE OTP
 router.post("/phone/verify", validateVerifyCode, verifyPhoneChange);
 // VERIFY PASSWORD CHANGE OTP
 router.post("/password/verify", validateVerifyCode, verifyPasswordChange);
-// UPDATE REPORT SETTINGS
-router.patch("/reports", validateUpdateReportSettings, updateReportSettings);
-// VERIFY NEW EMAIL OTP
+// VERIFY NEW EMAIL OTP (STEP 2 OF EMAIL CHANGE)
 router.post("/email/verify-new", validateVerifyCode, verifyNewEmailForChange);
+// UPDATE PRICING (MILK AND YOGHURT RATES — ACCOUNT-LEVEL, AFFECTS ALL USERS)
+router.patch(
+  "/pricing",
+  requireRole("superadmin", "admin"),
+  validateUpdatePricing,
+  updatePricing,
+);
+// UPDATE REPORT SETTINGS (AUTOMATED REPORT TOGGLES — ACCOUNT-LEVEL, AFFECTS ALL USERS)
+router.patch(
+  "/reports",
+  requireRole("superadmin", "admin"),
+  validateUpdateReportSettings,
+  updateReportSettings,
+);
 
 // <== EXPORTING ROUTER ==>
 export default router;

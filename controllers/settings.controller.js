@@ -14,6 +14,7 @@ import bcrypt from "bcryptjs";
 import getDataURI from "../utils/dataURI.js";
 import { User } from "../models/user.model.js";
 import cloudinary from "../utils/cloudinary.js";
+import { Account } from "../models/account.model.js";
 import expressAsyncHandler from "express-async-handler";
 
 // <== HELPER: GENERATE 6-DIGIT OTP CODE ==>
@@ -21,7 +22,7 @@ const generateOtpCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
 // <== HELPER: BUILD SAFE USER PROFILE OBJECT FOR API RESPONSES ==>
-const buildUserProfile = (user) => ({
+const buildUserProfile = (user, account) => ({
   id: user._id.toString(),
   fullName: user.fullName,
   email: user.email,
@@ -30,10 +31,10 @@ const buildUserProfile = (user) => ({
   avatar: user.avatar?.url
     ? { url: user.avatar.url, publicId: user.avatar.publicId }
     : null,
-  milkRate: user.milkRate,
-  yoghurtRate: user.yoghurtRate,
-  dailyReportsEnabled: user.dailyReportsEnabled,
-  monthlyReportsEnabled: user.monthlyReportsEnabled,
+  milkRate: account?.milkRate ?? 120,
+  yoghurtRate: account?.yoghurtRate ?? 180,
+  dailyReportsEnabled: account?.dailyReportsEnabled ?? false,
+  monthlyReportsEnabled: account?.monthlyReportsEnabled ?? false,
 });
 
 // <== HELPER: VERIFY AND CONSUME A SECURITY CODE ==>
@@ -97,16 +98,22 @@ const verifyAndConsumeCode = async (userId, purpose, submittedCode) => {
 
 /**
  * GET FULL USER PROFILE INCLUDING ALL SETTINGS FIELDS
+ * FETCHES BOTH USER (PERSONAL DATA) AND ACCOUNT (BUSINESS CONFIG) IN PARALLEL
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
  */
 // <== GET PROFILE ==>
 export const getProfile = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
+  // GETTING USER ID AND ACCOUNT ID FROM AUTHENTICATED REQUEST
   const userId = req.id;
-  // FINDING USER BY ID
-  const user = await User.findById(userId).lean().exec();
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // FETCHING USER AND ACCOUNT IN PARALLEL — NEITHER DEPENDS ON THE OTHER
+  const [user, account] = await Promise.all([
+    User.findById(userId).lean().exec(),
+    Account.findById(accountId).lean().exec(),
+  ]);
   // IF USER NOT FOUND
   if (!user) {
     // RETURNING ERROR RESPONSE
@@ -114,11 +121,11 @@ export const getProfile = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // RETURNING SAFE USER PROFILE
+  // RETURNING SAFE USER PROFILE WITH COMBINED USER AND ACCOUNT DATA
   res.status(200).json({
     message: "Profile Fetched Successfully!",
     success: true,
-    data: buildUserProfile(user),
+    data: buildUserProfile(user, account),
   });
   // RETURNING FROM FUNCTION
   return;
@@ -132,18 +139,19 @@ export const getProfile = expressAsyncHandler(async (req, res) => {
  */
 // <== UPDATE FULL NAME ==>
 export const updateFullName = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
+  // GETTING USER ID AND ACCOUNT ID FROM AUTHENTICATED REQUEST
   const userId = req.id;
+  // GETTING ACCOUNT ID FOR PROFILE RESPONSE
+  const accountId = req.accountId;
   // GETTING NEW FULL NAME FROM REQUEST BODY
   const { fullName } = req.body;
-  // UPDATING USER FULL NAME
-  const user = await User.findByIdAndUpdate(
-    userId,
-    { fullName: fullName.trim() },
-    { new: true },
-  )
-    .lean()
-    .exec();
+  // UPDATING USER AND FETCHING ACCOUNT IN PARALLEL — ACCOUNT DATA IS NEEDED FOR THE PROFILE RESPONSE
+  const [user, account] = await Promise.all([
+    User.findByIdAndUpdate(userId, { fullName: fullName.trim() }, { new: true })
+      .lean()
+      .exec(),
+    Account.findById(accountId).lean().exec(),
+  ]);
   // IF USER NOT FOUND
   if (!user) {
     // RETURNING ERROR RESPONSE
@@ -155,7 +163,7 @@ export const updateFullName = expressAsyncHandler(async (req, res) => {
   res.status(200).json({
     message: "Name Updated Successfully!",
     success: true,
-    data: buildUserProfile(user),
+    data: buildUserProfile(user, account),
   });
   // RETURNING FROM FUNCTION
   return;
@@ -169,18 +177,23 @@ export const updateFullName = expressAsyncHandler(async (req, res) => {
  */
 // <== UPDATE ADDRESS ==>
 export const updateAddress = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
+  // GETTING USER ID AND ACCOUNT ID FROM AUTHENTICATED REQUEST
   const userId = req.id;
+  // GETTING ACCOUNT ID FOR PROFILE RESPONSE
+  const accountId = req.accountId;
   // GETTING ADDRESS FROM REQUEST BODY (NULL-COALESCED TO ALLOW CLEARING)
   const { address } = req.body;
-  // UPDATING USER ADDRESS
-  const user = await User.findByIdAndUpdate(
-    userId,
-    { address: address?.trim() || null },
-    { new: true },
-  )
-    .lean()
-    .exec();
+  // UPDATING USER AND FETCHING ACCOUNT IN PARALLEL — ACCOUNT DATA IS NEEDED FOR THE PROFILE RESPONSE
+  const [user, account] = await Promise.all([
+    User.findByIdAndUpdate(
+      userId,
+      { address: address?.trim() || null },
+      { new: true },
+    )
+      .lean()
+      .exec(),
+    Account.findById(accountId).lean().exec(),
+  ]);
   // IF USER NOT FOUND
   if (!user) {
     // RETURNING ERROR RESPONSE
@@ -192,7 +205,7 @@ export const updateAddress = expressAsyncHandler(async (req, res) => {
   res.status(200).json({
     message: "Address Updated Successfully!",
     success: true,
-    data: buildUserProfile(user),
+    data: buildUserProfile(user, account),
   });
   // RETURNING FROM FUNCTION
   return;
@@ -287,8 +300,10 @@ export const initiatePhoneChange = expressAsyncHandler(async (req, res) => {
  */
 // <== VERIFY PHONE CHANGE ==>
 export const verifyPhoneChange = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
+  // GETTING USER ID AND ACCOUNT ID FROM AUTHENTICATED REQUEST
   const userId = req.id;
+  // GETTING ACCOUNT ID FOR PROFILE RESPONSE
+  const accountId = req.accountId;
   // GETTING OTP CODE FROM REQUEST BODY
   const { code } = req.body;
   // VERIFYING AND CONSUMING THE SECURITY CODE
@@ -308,14 +323,17 @@ export const verifyPhoneChange = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // APPLYING NEW PHONE NUMBER TO USER ACCOUNT
-  const user = await User.findByIdAndUpdate(
-    userId,
-    { phoneNumber: result.pendingValue },
-    { new: true },
-  )
-    .lean()
-    .exec();
+  // APPLYING NEW PHONE NUMBER AND FETCHING ACCOUNT IN PARALLEL
+  const [user, account] = await Promise.all([
+    User.findByIdAndUpdate(
+      userId,
+      { phoneNumber: result.pendingValue },
+      { new: true },
+    )
+      .lean()
+      .exec(),
+    Account.findById(accountId).lean().exec(),
+  ]);
   // IF USER NOT FOUND
   if (!user) {
     // RETURNING ERROR RESPONSE
@@ -327,7 +345,7 @@ export const verifyPhoneChange = expressAsyncHandler(async (req, res) => {
   res.status(200).json({
     message: "Phone Number Updated Successfully!",
     success: true,
-    data: buildUserProfile(user),
+    data: buildUserProfile(user, account),
   });
   // RETURNING FROM FUNCTION
   return;
@@ -497,8 +515,10 @@ export const verifyCurrentEmailForChange = expressAsyncHandler(
  */
 // <== VERIFY NEW EMAIL FOR CHANGE ==>
 export const verifyNewEmailForChange = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
+  // GETTING USER ID AND ACCOUNT ID FROM AUTHENTICATED REQUEST
   const userId = req.id;
+  // GETTING ACCOUNT ID FOR PROFILE RESPONSE
+  const accountId = req.accountId;
   // GETTING OTP CODE FROM REQUEST BODY
   const { code } = req.body;
   // VERIFYING AND CONSUMING THE NEW EMAIL SECURITY CODE
@@ -516,14 +536,17 @@ export const verifyNewEmailForChange = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // APPLYING NEW EMAIL ADDRESS TO USER ACCOUNT
-  const user = await User.findByIdAndUpdate(
-    userId,
-    { email: result.pendingValue },
-    { new: true },
-  )
-    .lean()
-    .exec();
+  // APPLYING NEW EMAIL ADDRESS AND FETCHING ACCOUNT IN PARALLEL
+  const [user, account] = await Promise.all([
+    User.findByIdAndUpdate(
+      userId,
+      { email: result.pendingValue },
+      { new: true },
+    )
+      .lean()
+      .exec(),
+    Account.findById(accountId).lean().exec(),
+  ]);
   // IF USER NOT FOUND
   if (!user) {
     // RETURNING ERROR RESPONSE
@@ -535,7 +558,7 @@ export const verifyNewEmailForChange = expressAsyncHandler(async (req, res) => {
   res.status(200).json({
     message: "Email Address Updated Successfully!",
     success: true,
-    data: buildUserProfile(user),
+    data: buildUserProfile(user, account),
   });
   // RETURNING FROM FUNCTION
   return;
@@ -643,8 +666,10 @@ export const verifyPasswordChange = expressAsyncHandler(async (req, res) => {
  */
 // <== UPLOAD AVATAR ==>
 export const uploadAvatar = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
+  // GETTING USER ID AND ACCOUNT ID FROM AUTHENTICATED REQUEST
   const userId = req.id;
+  // GETTING ACCOUNT ID FOR PROFILE RESPONSE
+  const accountId = req.accountId;
   // GUARD: ENSURE FILE WAS PROVIDED AND PASSED MULTER VALIDATION
   if (!req.file) {
     // RETURNING ERROR RESPONSE
@@ -675,22 +700,25 @@ export const uploadAvatar = expressAsyncHandler(async (req, res) => {
   }
   // CONVERTING FILE BUFFER TO DATA URI FOR CLOUDINARY UPLOAD
   const fileDataURI = getDataURI(req.file);
-  // UPLOADING NEW AVATAR TO CLOUDINARY WITH FACE-AWARE CROP AND OPTIMISATION
-  const uploadResult = await cloudinary.uploader.upload(fileDataURI.content, {
-    // ORGANISING AVATARS INTO A DEDICATED
-    folder: "MilkShop-Management-System/avatars",
-    // OPTIMISING AVATAR QUALITY
-    transformation: [
-      // CROP TO SQUARE WITH FACE-AWARE GRAVITY
-      { width: 400, height: 400, crop: "fill", gravity: "face" },
-      // AUTO QUALITY OPTIMISATION
-      { quality: "auto:good" },
-      // AUTO FORMAT SELECTION (WebP WHERE SUPPORTED)
-      { fetch_format: "auto" },
-    ],
-    // SPECIFYING RESOURCE TYPE AS IMAGE FOR CLOUDINARY OPTIMISATIONS
-    resource_type: "image",
-  });
+  // UPLOADING NEW AVATAR TO CLOUDINARY AND FETCHING ACCOUNT IN PARALLEL
+  const [uploadResult, account] = await Promise.all([
+    cloudinary.uploader.upload(fileDataURI.content, {
+      // ORGANISING AVATARS INTO A DEDICATED FOLDER
+      folder: "MilkShop-Management-System/avatars",
+      // OPTIMISING AVATAR QUALITY
+      transformation: [
+        // CROP TO SQUARE WITH FACE-AWARE GRAVITY
+        { width: 400, height: 400, crop: "fill", gravity: "face" },
+        // AUTO QUALITY OPTIMISATION
+        { quality: "auto:good" },
+        // AUTO FORMAT SELECTION (WebP WHERE SUPPORTED)
+        { fetch_format: "auto" },
+      ],
+      // SPECIFYING RESOURCE TYPE AS IMAGE FOR CLOUDINARY OPTIMISATIONS
+      resource_type: "image",
+    }),
+    Account.findById(accountId).lean().exec(),
+  ]);
   // UPDATING USER DOCUMENT WITH NEW CLOUDINARY URL AND PUBLIC ID
   const updatedUser = await User.findByIdAndUpdate(
     userId,
@@ -706,7 +734,7 @@ export const uploadAvatar = expressAsyncHandler(async (req, res) => {
   res.status(200).json({
     message: "Avatar Updated Successfully!",
     success: true,
-    data: buildUserProfile(updatedUser),
+    data: buildUserProfile(updatedUser, account),
   });
   // RETURNING FROM FUNCTION
   return;
@@ -720,8 +748,10 @@ export const uploadAvatar = expressAsyncHandler(async (req, res) => {
  */
 // <== DELETE AVATAR ==>
 export const deleteAvatar = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
+  // GETTING USER ID AND ACCOUNT ID FROM AUTHENTICATED REQUEST
   const userId = req.id;
+  // GETTING ACCOUNT ID FOR PROFILE RESPONSE
+  const accountId = req.accountId;
   // FINDING CURRENT USER
   const user = await User.findById(userId).lean().exec();
   // IF USER NOT FOUND
@@ -740,52 +770,87 @@ export const deleteAvatar = expressAsyncHandler(async (req, res) => {
   }
   // DELETING AVATAR FROM CLOUDINARY
   await cloudinary.uploader.destroy(user.avatar.publicId);
-  // CLEARING AVATAR FIELDS FROM USER DOCUMENT
-  const updatedUser = await User.findByIdAndUpdate(
-    userId,
-    { "avatar.url": null, "avatar.publicId": null },
-    { new: true },
-  )
-    .lean()
-    .exec();
+  // CLEARING AVATAR FIELDS FROM USER DOCUMENT AND FETCHING ACCOUNT IN PARALLEL
+  const [updatedUser, account] = await Promise.all([
+    User.findByIdAndUpdate(
+      userId,
+      { "avatar.url": null, "avatar.publicId": null },
+      { new: true },
+    )
+      .lean()
+      .exec(),
+    Account.findById(accountId).lean().exec(),
+  ]);
   // RETURNING UPDATED PROFILE
   res.status(200).json({
     message: "Avatar Removed Successfully!",
     success: true,
-    data: buildUserProfile(updatedUser),
+    data: buildUserProfile(updatedUser, account),
   });
   // RETURNING FROM FUNCTION
   return;
 });
 
 /**
- * UPDATE PRICING — UPDATES MILK AND/OR YOGHURT RATES ON USER DOCUMENT
+ * UPDATE PRICING — UPDATES MILK AND/OR YOGHURT RATES ON THE ACCOUNT DOCUMENT
+ * ADMIN-AND-ABOVE ONLY — PRICING IS BUSINESS-WIDE CONFIGURATION, NEVER DELEGABLE
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
  */
 // <== UPDATE PRICING ==>
 export const updatePricing = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
+  // GETTING USER ID AND ACCOUNT ID FROM AUTHENTICATED REQUEST
   const userId = req.id;
+  // GETTING ACCOUNT ID — PRICING IS ACCOUNT-LEVEL, NOT PER-USER
+  const accountId = req.accountId;
   // GETTING RATE VALUES FROM REQUEST BODY
   const { milkRate, yoghurtRate } = req.body;
   // BUILDING PARTIAL UPDATE OBJECT WITH ONLY PROVIDED FIELDS
   const updates = {};
-  // PARSING MILK RATE IF PROVIDED
-  if (milkRate !== undefined) updates.milkRate = parseFloat(milkRate);
-  // PARSING YOGHURT RATE IF PROVIDED
-  if (yoghurtRate !== undefined) updates.yoghurtRate = parseFloat(yoghurtRate);
-  // APPLYING UPDATES TO USER DOCUMENT
-  const user = await User.findByIdAndUpdate(userId, updates, {
-    new: true,
-  })
-    .lean()
-    .exec();
-  // IF USER NOT FOUND
-  if (!user) {
+  // VALIDATING AND PARSING MILK RATE IF PROVIDED
+  if (milkRate !== undefined) {
+    // PARSING MILK RATE AS FLOAT
+    const parsedMilkRate = parseFloat(milkRate);
+    // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES
+    if (!Number.isFinite(parsedMilkRate) || parsedMilkRate <= 0) {
+      // RETURNING ERROR RESPONSE
+      res.status(400).json({
+        message: "Milk Rate must be a Valid Positive Number!",
+        success: false,
+      });
+      // RETURNING FROM FUNCTION
+      return;
+    }
+    // APPLYING PARSED MILK RATE
+    updates.milkRate = parsedMilkRate;
+  }
+  // VALIDATING AND PARSING YOGHURT RATE IF PROVIDED
+  if (yoghurtRate !== undefined) {
+    // PARSING YOGHURT RATE AS FLOAT
+    const parsedYoghurtRate = parseFloat(yoghurtRate);
+    // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES (DEFENSE IN DEPTH)
+    if (!Number.isFinite(parsedYoghurtRate) || parsedYoghurtRate <= 0) {
+      // RETURNING ERROR RESPONSE
+      res.status(400).json({
+        message: "Yoghurt Rate must be a Valid Positive Number!",
+        success: false,
+      });
+      // RETURNING FROM FUNCTION
+      return;
+    }
+    // APPLYING PARSED YOGHURT RATE
+    updates.yoghurtRate = parsedYoghurtRate;
+  }
+  // UPDATING ACCOUNT DOCUMENT WITH NEW RATES AND FETCHING USER IN PARALLEL
+  const [account, user] = await Promise.all([
+    Account.findByIdAndUpdate(accountId, updates, { new: true }).lean().exec(),
+    User.findById(userId).lean().exec(),
+  ]);
+  // IF ACCOUNT NOT FOUND
+  if (!account) {
     // RETURNING ERROR RESPONSE
-    res.status(404).json({ message: "User Not Found!", success: false });
+    res.status(404).json({ message: "Account Not Found!", success: false });
     // RETURNING FROM FUNCTION
     return;
   }
@@ -793,22 +858,25 @@ export const updatePricing = expressAsyncHandler(async (req, res) => {
   res.status(200).json({
     message: "Pricing Updated Successfully!",
     success: true,
-    data: buildUserProfile(user),
+    data: buildUserProfile(user, account),
   });
   // RETURNING FROM FUNCTION
   return;
 });
 
 /**
- * UPDATE REPORT SETTINGS — TOGGLES DAILY AND/OR MONTHLY AUTOMATED REPORTS
+ * UPDATE REPORT SETTINGS — TOGGLES DAILY AND/OR MONTHLY AUTOMATED REPORTS ON THE ACCOUNT DOCUMENT
+ * ADMIN-AND-ABOVE ONLY — REPORT SETTINGS ARE BUSINESS-WIDE CONFIGURATION, NEVER DELEGABLE
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
  */
 // <== UPDATE REPORT SETTINGS ==>
 export const updateReportSettings = expressAsyncHandler(async (req, res) => {
-  // GETTING USER ID FROM AUTHENTICATED REQUEST
+  // GETTING USER ID AND ACCOUNT ID FROM AUTHENTICATED REQUEST
   const userId = req.id;
+  // GETTING ACCOUNT ID — REPORT SETTINGS ARE ACCOUNT-LEVEL, NOT PER-USER
+  const accountId = req.accountId;
   // GETTING REPORT TOGGLE VALUES FROM REQUEST BODY
   const { dailyReportsEnabled, monthlyReportsEnabled } = req.body;
   // BUILDING PARTIAL UPDATE OBJECT WITH ONLY PROVIDED FIELDS
@@ -819,16 +887,15 @@ export const updateReportSettings = expressAsyncHandler(async (req, res) => {
   // PARSING MONTHLY REPORTS TO BOOLEAN IF PROVIDED
   if (monthlyReportsEnabled !== undefined)
     updates.monthlyReportsEnabled = Boolean(monthlyReportsEnabled);
-  // APPLYING UPDATES TO USER DOCUMENT
-  const user = await User.findByIdAndUpdate(userId, updates, {
-    new: true,
-  })
-    .lean()
-    .exec();
-  // IF USER NOT FOUND
-  if (!user) {
+  // UPDATING ACCOUNT DOCUMENT WITH NEW REPORT FLAGS AND FETCHING USER IN PARALLEL
+  const [account, user] = await Promise.all([
+    Account.findByIdAndUpdate(accountId, updates, { new: true }).lean().exec(),
+    User.findById(userId).lean().exec(),
+  ]);
+  // IF ACCOUNT NOT FOUND
+  if (!account) {
     // RETURNING ERROR RESPONSE
-    res.status(404).json({ message: "User Not Found!", success: false });
+    res.status(404).json({ message: "Account Not Found!", success: false });
     // RETURNING FROM FUNCTION
     return;
   }
@@ -836,7 +903,7 @@ export const updateReportSettings = expressAsyncHandler(async (req, res) => {
   res.status(200).json({
     message: "Report Settings Updated Successfully!",
     success: true,
-    data: buildUserProfile(user),
+    data: buildUserProfile(user, account),
   });
   // RETURNING FROM FUNCTION
   return;
@@ -948,7 +1015,6 @@ export const initiateForgotPassword = expressAsyncHandler(async (req, res) => {
 
 /**
  * VERIFY FORGOT PASSWORD OTP — VALIDATES CODE, CREATES SHORT-LIVED RESET PERMISSION TOKEN
- * CONSUMING THE OTP CODE AND CREATING A RESET PERMISSION CODE ARE ATOMIC IN SEQUENCE
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
@@ -1007,8 +1073,6 @@ export const verifyForgotPasswordOtp = expressAsyncHandler(async (req, res) => {
 
 /**
  * RESET FORGOT PASSWORD — FINDS RESET PERMISSION TOKEN, APPLIES NEW PASSWORD
- * THE PRESENCE OF A VALID FORGOT_PASSWORD_RESET TOKEN IS THE AUTHORISATION
- * NO ADDITIONAL OTP IS REQUIRED AT THIS STEP
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
@@ -1052,10 +1116,11 @@ export const resetForgotPassword = expressAsyncHandler(async (req, res) => {
   }
   // HASHING THE NEW PASSWORD BEFORE APPLYING TO THE USER ACCOUNT
   const hashedNewPassword = await bcrypt.hash(newPassword, 10);
-  // APPLYING NEW PASSWORD TO USER ACCOUNT
-  await User.findByIdAndUpdate(user._id, { password: hashedNewPassword });
-  // CONSUMING THE RESET PERMISSION TOKEN — PREVENTS REUSE AFTER SUCCESSFUL RESET
-  await SecurityCode.updateOne({ _id: resetCode._id }, { used: true });
+  // APPLYING NEW PASSWORD AND CONSUMING RESET TOKEN IN PARALLEL
+  await Promise.all([
+    User.findByIdAndUpdate(user._id, { password: hashedNewPassword }),
+    SecurityCode.updateOne({ _id: resetCode._id }, { used: true }),
+  ]);
   // RETURNING SUCCESS RESPONSE — CLIENT SHOULD NAVIGATE TO LOGIN
   res.status(200).json({
     message:
