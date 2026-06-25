@@ -6,7 +6,8 @@ import {
   fetchMonthlyReportData,
 } from "./reportService.js";
 import cron from "node-cron";
-import { User } from "../models/user.model.js";
+import { Account } from "../models/account.model.js";
+import { User, USER_ROLES } from "../models/user.model.js";
 import { sendDailyReport, sendMonthlyReport } from "./emailService.js";
 
 // <== DAILY LOCK FLAG — PREVENT OVERLAPPING EXECUTIONS IF A RUN TAKES LONGER THAN 24 HOURS ==>
@@ -14,13 +15,13 @@ let isDailyRunning = false;
 // <== MONTHLY LOCK FLAG — PREVENT OVERLAPPING EXECUTIONS IF A RUN TAKES LONGER THAN 24 HOURS ==>
 let isMonthlyRunning = false;
 
-// <== HELPER: PROCESS DAILY REPORTS FOR ALL ELIGIBLE USERS ==>
+// <== HELPER: PROCESS DAILY REPORTS FOR ALL ELIGIBLE ACCOUNTS ==>
 const processDailyReports = async (yesterdayStr) => {
   // GUARD: SKIP IF PREVIOUS DAILY RUN IS STILL IN PROGRESS
   if (isDailyRunning) {
     // LOG WARNING AND RETURN WITHOUT STARTING A NEW RUN
     console.warn(
-      "[CRON:DAILY] Skipping run — previous execution is still in progress.",
+      "[CRON:DAILY] Skipping Run — Previous Execution is Still in Progress.",
     );
     // RELEASE LOCK
     return;
@@ -32,64 +33,82 @@ const processDailyReports = async (yesterdayStr) => {
     `[CRON:DAILY] Starting Daily Report Run — Report Period: ${yesterdayStr}`,
   );
   try {
-    // FIND ALL USERS ELIGIBLE FOR DAILY REPORT
-    const eligibleUsers = await User.find({
+    // FINDING ALL ACCOUNTS ELIGIBLE FOR DAILY REPORT
+    // dailyReportsEnabled AND lastDailyReportSentDate NOW LIVE ON Account, NOT User
+    const eligibleAccounts = await Account.find({
       dailyReportsEnabled: true,
       lastDailyReportSentDate: { $ne: yesterdayStr },
     })
-      .select("_id email fullName")
+      .select("_id")
       .lean()
       .exec();
-    // LOG ELIGIBLE USER COUNT
+    // LOG ELIGIBLE ACCOUNT COUNT
     console.log(
-      `[CRON:DAILY] ${eligibleUsers.length} user(s) eligible for daily report (period: ${yesterdayStr})`,
+      `[CRON:DAILY] ${eligibleAccounts.length} Account(s) Eligible for Daily Report (Period: ${yesterdayStr})`,
     );
-    // PROCESS EACH ELIGIBLE USER INDEPENDENTLY
-    for (const user of eligibleUsers) {
+    // PROCESS EACH ELIGIBLE ACCOUNT INDEPENDENTLY
+    for (const account of eligibleAccounts) {
       try {
-        // FETCHING DAILY REPORT DATA FOR THIS USER AND DATE
-        const data = await fetchDailyReportData(user._id, yesterdayStr);
-        // SENDING THE DAILY REPORT EMAIL
+        // FINDING THE SUPERADMIN OF THIS ACCOUNT TO OBTAIN EMAIL AND NAME FOR THE REPORT
+        const superadmin = await User.findOne({
+          accountId: account._id,
+          role: USER_ROLES.SUPERADMIN,
+        })
+          .select("email fullName")
+          .lean()
+          .exec();
+        // GUARD: SKIP ACCOUNT IF SUPERADMIN IS NOT FOUND — LOG WARNING FOR DATA INTEGRITY VISIBILITY
+        if (!superadmin) {
+          // LOGGING WARNING FOR MISSING SUPERADMIN
+          console.warn(
+            `[CRON:DAILY] No Superadmin Found for Account ${account._id} — Skipping`,
+          );
+          // SKIPPING TO NEXT ACCOUNT
+          continue;
+        }
+        // FETCHING DAILY REPORT DATA FOR THIS ACCOUNT AND DATE
+        const data = await fetchDailyReportData(account._id, yesterdayStr);
+        // SENDING THE DAILY REPORT EMAIL TO THE SUPERADMIN
         await sendDailyReport({
-          to: user.email,
-          fullName: user.fullName,
+          to: superadmin.email,
+          fullName: superadmin.fullName,
           data,
           date: yesterdayStr,
         });
-        // UPDATING THE USER LAST DAILY REPORT SENT DATE
-        await User.updateOne(
-          { _id: user._id },
+        // UPDATING THE ACCOUNT LAST DAILY REPORT SENT DATE — IDEMPOTENCY GUARD ON Account
+        await Account.updateOne(
+          { _id: account._id },
           { lastDailyReportSentDate: yesterdayStr },
         );
-        // LOG SUCCESS PER USER
+        // LOG SUCCESS PER ACCOUNT
         console.log(
-          `[CRON:DAILY] Sent to ${user.email} for Period ${yesterdayStr}`,
+          `[CRON:DAILY] Sent to ${superadmin.email} for Period ${yesterdayStr}`,
         );
-      } catch (userErr) {
-        // LOG ERROR PER USER
+      } catch (accountErr) {
+        // LOG ERROR PER ACCOUNT
         console.error(
-          `[CRON:DAILY] Failed for ${user.email}: ${userErr.message}`,
+          `[CRON:DAILY] Failed for Account ${account._id}: ${accountErr.message}`,
         );
       }
     }
   } catch (fatalErr) {
     // LOG FATAL ERROR — LOCK WILL BE RELEASED IN FINALLY BLOCK
-    console.error("[CRON:DAILY] Fatal error during run:", fatalErr.message);
+    console.error("[CRON:DAILY] Fatal Error during Run:", fatalErr.message);
   } finally {
     // ALWAYS RELEASE LOCK — EVEN IF AN ERROR OCCURRED
     isDailyRunning = false;
     // LOG RUN COMPLETE
-    console.log("[CRON:DAILY] Run complete.");
+    console.log("[CRON:DAILY] Run Complete.");
   }
 };
 
-// <== HELPER: PROCESS MONTHLY REPORTS FOR ALL ELIGIBLE USERS ==>
+// <== HELPER: PROCESS MONTHLY REPORTS FOR ALL ELIGIBLE ACCOUNTS ==>
 const processMonthlyReports = async (lastMonthStr) => {
   // GUARD: SKIP IF PREVIOUS MONTHLY RUN IS STILL IN PROGRESS
   if (isMonthlyRunning) {
     // LOG WARNING AND RETURN WITHOUT STARTING A NEW RUN
     console.warn(
-      "[CRON:MONTHLY] Skipping run — previous execution is still in progress.",
+      "[CRON:MONTHLY] Skipping Run — Previous Execution is Still in Progress.",
     );
     // RELEASE LOCK
     return;
@@ -98,57 +117,75 @@ const processMonthlyReports = async (lastMonthStr) => {
   isMonthlyRunning = true;
   // LOG RUN START
   console.log(
-    `[CRON:MONTHLY] Starting monthly report run — report period: ${lastMonthStr}`,
+    `[CRON:MONTHLY] Starting Monthly range: Report Run — Report Period: ${lastMonthStr}`,
   );
   try {
-    // FIND ALL USERS ELIGIBLE FOR MONTHLY REPORT
-    const eligibleUsers = await User.find({
+    // FINDING ALL ACCOUNTS ELIGIBLE FOR MONTHLY REPORT
+    // monthlyReportsEnabled AND lastMonthlyReportSentDate NOW LIVE ON Account, NOT User
+    const eligibleAccounts = await Account.find({
       monthlyReportsEnabled: true,
       lastMonthlyReportSentDate: { $ne: lastMonthStr },
     })
-      .select("_id email fullName")
+      .select("_id")
       .lean()
       .exec();
-    // LOG ELIGIBLE USER COUNT
+    // LOG ELIGIBLE ACCOUNT COUNT
     console.log(
-      `[CRON:MONTHLY] ${eligibleUsers.length} user(s) eligible for monthly report (period: ${lastMonthStr})`,
+      `[CRON:MONTHLY] ${eligibleAccounts.length} Account(s) Eligible for Monthly Report (Period: ${lastMonthStr})`,
     );
-    // PROCESS EACH ELIGIBLE USER INDEPENDENTLY
-    for (const user of eligibleUsers) {
+    // PROCESS EACH ELIGIBLE ACCOUNT INDEPENDENTLY
+    for (const account of eligibleAccounts) {
       try {
-        // FETCHING COMPREHENSIVE MONTHLY REPORT DATA FOR THIS USER AND MONTH
-        const data = await fetchMonthlyReportData(user._id, lastMonthStr);
-        // SENDING THE MONTHLY REPORT EMAIL
+        // FINDING THE SUPERADMIN OF THIS ACCOUNT TO OBTAIN EMAIL AND NAME FOR THE REPORT
+        const superadmin = await User.findOne({
+          accountId: account._id,
+          role: USER_ROLES.SUPERADMIN,
+        })
+          .select("email fullName")
+          .lean()
+          .exec();
+        // GUARD: SKIP ACCOUNT IF SUPERADMIN IS NOT FOUND — LOG WARNING FOR DATA INTEGRITY VISIBILITY
+        if (!superadmin) {
+          // LOGGING WARNING FOR MISSING SUPERADMIN
+          console.warn(
+            `[CRON:MONTHLY] No Superadmin Found for Account ${account._id} — Skipping`,
+          );
+          // SKIPPING TO NEXT ACCOUNT
+          continue;
+        }
+        // FETCHING COMPREHENSIVE MONTHLY REPORT DATA FOR THIS ACCOUNT AND MONTH
+        const data = await fetchMonthlyReportData(account._id, lastMonthStr);
+        // SENDING THE MONTHLY REPORT EMAIL TO THE SUPERADMIN
         await sendMonthlyReport({
-          to: user.email,
-          fullName: user.fullName,
+          to: superadmin.email,
+          fullName: superadmin.fullName,
           data,
           month: lastMonthStr,
         });
-        // UPDATING THE USER LAST MONTHLY REPORT SENT DATE
-        await User.updateOne(
-          { _id: user._id },
+        // UPDATING THE ACCOUNT LAST MONTHLY REPORT SENT DATE — IDEMPOTENCY GUARD ON Account
+        await Account.updateOne(
+          { _id: account._id },
           { lastMonthlyReportSentDate: lastMonthStr },
         );
-        // LOG SUCCESS PER USER
+        // LOG SUCCESS PER ACCOUNT
         console.log(
-          `[CRON:MONTHLY] Sent to ${user.email} for period ${lastMonthStr}`,
+          `[CRON:MONTHLY] Sent to ${superadmin.email} for Period ${lastMonthStr}`,
         );
-      } catch (userErr) {
-        // LOG ERROR PER USER
+      } catch (accountErr) {
+        // LOG ERROR PER ACCOUNT
         console.error(
-          `[CRON:MONTHLY] Failed for ${user.email}: ${userErr.message}`,
+          `[CRON:MONTHLY] Failed for Account ${account._id}: ${accountErr.message}`,
         );
       }
     }
   } catch (fatalErr) {
     // LOG FATAL ERROR — LOCK WILL BE RELEASED IN FINALLY BLOCK
-    console.error("[CRON:MONTHLY] Fatal error during run:", fatalErr.message);
+    console.error("[CRON:MONTHLY] Fatal Error during Run:", fatalErr.message);
   } finally {
     // ALWAYS RELEASE LOCK — EVEN IF AN ERROR OCCURRED
     isMonthlyRunning = false;
     // LOG RUN COMPLETE
-    console.log("[CRON:MONTHLY] Run complete.");
+    console.log("[CRON:MONTHLY] Run Complete.");
   }
 };
 
