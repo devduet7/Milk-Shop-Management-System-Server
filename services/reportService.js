@@ -54,20 +54,20 @@ const sf = (n, d = 2) => parseFloat((n ?? 0).toFixed(d));
  * FETCH AGGREGATED DATA FOR THE DAILY REPORT
  * COVERS SALES, QUICK SALES, PURCHASES, EXPENDITURES, AND DELIVERIES FOR A SINGLE DATE
  * ALL FIVE AGGREGATIONS RUN IN PARALLEL VIA PROMISE.ALL
- * @param {string | Object} userId - USER ID (STRING OR OBJECTID)
+ * @param {string | Object} accountId - ACCOUNT ID (STRING OR OBJECTID)
  * @param {string} dateStr - REPORT DATE IN YYYY-MM-DD FORMAT (YESTERDAY)
  * @returns {Promise<Object>} STRUCTURED DAILY REPORT DATA
  */
 // <== FETCH DAILY REPORT DATA ==>
-export const fetchDailyReportData = async (userId, dateStr) => {
-  // CONVERTING USER ID TO OBJECTID FOR AGGREGATION QUERIES
-  const userObjectId = new mongoose.Types.ObjectId(userId.toString());
+export const fetchDailyReportData = async (accountId, dateStr) => {
+  // CONVERTING ACCOUNT ID TO OBJECTID FOR AGGREGATION QUERIES
+  const accountObjectId = new mongoose.Types.ObjectId(accountId.toString());
   // RUNNING ALL FIVE AGGREGATIONS IN PARALLEL
   const [salesAgg, quickSalesAgg, purchasesAgg, expendituresAgg, deliveryAgg] =
     await Promise.all([
       // 1. SALES FOR THE DATE — GROUPED BY SALE TYPE FOR CUSTOMER/SHOP SPLIT
       Sale.aggregate([
-        { $match: { userId: userObjectId, date: dateStr } },
+        { $match: { accountId: accountObjectId, date: dateStr } },
         {
           $group: {
             _id: "$saleType",
@@ -79,7 +79,7 @@ export const fetchDailyReportData = async (userId, dateStr) => {
       ]),
       // 2. QUICK SALES FOR THE DATE — GROUPED BY TYPE FOR MILK/YOGHURT SPLIT
       QuickSale.aggregate([
-        { $match: { userId: userObjectId, date: dateStr } },
+        { $match: { accountId: accountObjectId, date: dateStr } },
         {
           $group: {
             _id: "$type",
@@ -91,7 +91,7 @@ export const fetchDailyReportData = async (userId, dateStr) => {
       ]),
       // 3. PURCHASES FOR THE DATE
       Purchase.aggregate([
-        { $match: { userId: userObjectId, date: dateStr } },
+        { $match: { accountId: accountObjectId, date: dateStr } },
         {
           $group: {
             _id: null,
@@ -103,7 +103,7 @@ export const fetchDailyReportData = async (userId, dateStr) => {
       ]),
       // 4. EXPENDITURES FOR THE DATE
       Expenditure.aggregate([
-        { $match: { userId: userObjectId, date: dateStr } },
+        { $match: { accountId: accountObjectId, date: dateStr } },
         {
           $group: {
             _id: null,
@@ -114,7 +114,7 @@ export const fetchDailyReportData = async (userId, dateStr) => {
       ]),
       // 5. DELIVERY RECORDS FOR THE DATE — GROUPED BY STATUS FOR DELIVERED/MISSED SPLIT
       DeliveryRecord.aggregate([
-        { $match: { userId: userObjectId, date: dateStr } },
+        { $match: { accountId: accountObjectId, date: dateStr } },
         {
           $group: {
             _id: "$status",
@@ -126,6 +126,7 @@ export const fetchDailyReportData = async (userId, dateStr) => {
     ]);
   // INITIALIZING THE SALES MAP
   const salesMap = {};
+  // PROCESSING SALES AGGREGATION RESULTS
   salesAgg.forEach(({ _id, totalAmount, pendingAmount, count }) => {
     // ADDING SALE TO SALES MAP
     salesMap[_id] = {
@@ -137,17 +138,17 @@ export const fetchDailyReportData = async (userId, dateStr) => {
       count,
     };
   });
-  // CALCULATING CUSTOMERS SALES TOTAL
+  // CALCULATING CUSTOMER SALES TOTAL
   const customerSalesTotal = salesMap["customer"]?.totalAmount ?? 0;
   // CALCULATING SHOP SALES TOTAL
   const shopSalesTotal = salesMap["shop"]?.totalAmount ?? 0;
-  // CALCULATING CUSTOMERS SALES PENDING
+  // CALCULATING CUSTOMER SALES PENDING
   const customerSalesPending = salesMap["customer"]?.pendingAmount ?? 0;
-  // CALCULATING TOTAL SALES PENDING
+  // CALCULATING TOTAL SALES REVENUE
   const totalSalesRevenue = sf(customerSalesTotal + shopSalesTotal);
   // INITIALIZING THE QUICK SALES MAP
   const qsMap = {};
-  // PROCESSING QUICK SALES
+  // PROCESSING QUICK SALES AGGREGATION RESULTS
   quickSalesAgg.forEach(({ _id, totalRevenue, qty, count }) => {
     // ADDING QUICK SALE TO QUICK SALES MAP
     qsMap[_id] = {
@@ -165,7 +166,7 @@ export const fetchDailyReportData = async (userId, dateStr) => {
   const yoghurtQsRevenue = qsMap["yoghurt"]?.totalRevenue ?? 0;
   // CALCULATING TOTAL QUICK SALES REVENUE
   const totalQsRevenue = sf(milkQsRevenue + yoghurtQsRevenue);
-  // CALCULATING THE RAW PURCHASE DATA
+  // EXTRACTING RAW PURCHASE DATA
   const purchRaw = purchasesAgg[0] ?? {};
   // TOTAL PURCHASE COST
   const totalPurchaseCost = sf(purchRaw.totalCost ?? 0);
@@ -173,7 +174,7 @@ export const fetchDailyReportData = async (userId, dateStr) => {
   const totalMilkPurchased = sf(purchRaw.totalMilk ?? 0, 3);
   // PURCHASE COUNT
   const purchaseCount = purchRaw.count ?? 0;
-  // CALCULATING THE RAW EXPENDITURE DATA
+  // EXTRACTING RAW EXPENDITURE DATA
   const expRaw = expendituresAgg[0] ?? {};
   // TOTAL EXPENDITURE AMOUNT
   const totalExpAmount = sf(expRaw.totalAmount ?? 0);
@@ -181,14 +182,14 @@ export const fetchDailyReportData = async (userId, dateStr) => {
   const expCount = expRaw.count ?? 0;
   // INITIALIZING THE DELIVERY MAP
   const delivMap = {};
-  // PROCESSING DELIVERIES
+  // PROCESSING DELIVERY AGGREGATION RESULTS
   deliveryAgg.forEach(({ _id, count, totalMilk }) => {
+    // ADDING DELIVERY STATUS TO DELIVERY MAP
     delivMap[_id] = {
       // COUNT OF DELIVERIES
       count,
-      totalMilk:
-        // TOTAL MILK DELIVERED
-        sf(totalMilk, 3),
+      // TOTAL MILK DELIVERED
+      totalMilk: sf(totalMilk, 3),
     };
   });
   // CALCULATING DELIVERY COUNT
@@ -197,7 +198,7 @@ export const fetchDailyReportData = async (userId, dateStr) => {
   const missedCount = delivMap["missed"]?.count ?? 0;
   // CALCULATING TOTAL MILK DELIVERED
   const totalMilkDelivered = delivMap["delivered"]?.totalMilk ?? 0;
-  // CALCULATING DELIVERY RATE
+  // CALCULATING TOTAL DELIVERY DAYS FOR RATE CALCULATION
   const totalDeliveries = deliveredCount + missedCount;
   // CALCULATING DELIVERY RATE
   const deliveryRate =
@@ -247,14 +248,14 @@ export const fetchDailyReportData = async (userId, dateStr) => {
  * COVERS ALL MODULES — SALES, QUICK SALES, PURCHASES, EXPENDITURES,
  * DELIVERIES, STAFF, AND ALL-TIME RECOVERY
  * ALL 12 AGGREGATIONS RUN IN PARALLEL VIA PROMISE.ALL
- * @param {string | Object} userId - USER ID (STRING OR OBJECTID)
+ * @param {string | Object} accountId - ACCOUNT ID (STRING OR OBJECTID)
  * @param {string} monthStr - REPORT MONTH IN YYYY-MM FORMAT (LAST MONTH)
  * @returns {Promise<Object>} STRUCTURED MONTHLY REPORT DATA
  */
 // <== FETCH MONTHLY REPORT DATA ==>
-export const fetchMonthlyReportData = async (userId, monthStr) => {
-  // CONVERTING USER ID TO OBJECTID FOR AGGREGATION QUERIES
-  const userObjectId = new mongoose.Types.ObjectId(userId.toString());
+export const fetchMonthlyReportData = async (accountId, monthStr) => {
+  // CONVERTING ACCOUNT ID TO OBJECTID FOR AGGREGATION QUERIES
+  const accountObjectId = new mongoose.Types.ObjectId(accountId.toString());
   // GETTING DATE RANGE FOR THE REPORT MONTH
   const { startDate, endDate } = getMonthDateRange(monthStr);
   // RUNNING ALL 12 AGGREGATIONS IN PARALLEL — NO SEQUENTIAL ROUND TRIPS
@@ -276,7 +277,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     Sale.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -293,7 +294,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     QuickSale.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -310,7 +311,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     Purchase.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -327,7 +328,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     Expenditure.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -343,7 +344,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     DeliveryRecord.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
         },
       },
@@ -359,7 +360,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     DeliveryRecord.aggregate([
       {
         $match: {
-          userId: userObjectId,
+          accountId: accountObjectId,
           date: { $gte: startDate, $lte: endDate },
           status: "delivered",
         },
@@ -387,12 +388,12 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     ]),
     // 7. PAYMENTS RECEIVED FOR THIS BILLING MONTH
     Payment.aggregate([
-      { $match: { userId: userObjectId, billingMonth: monthStr } },
+      { $match: { accountId: accountObjectId, billingMonth: monthStr } },
       { $group: { _id: null, totalPaid: { $sum: "$amount" } } },
     ]),
     // 8. ALL STAFF COUNT AND TOTAL SALARY BILL
     StaffMember.aggregate([
-      { $match: { userId: userObjectId } },
+      { $match: { accountId: accountObjectId } },
       {
         $group: {
           _id: null,
@@ -403,7 +404,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     ]),
     // 9. STAFF MONTH PAYMENT STATUS FOR THE REPORT MONTH
     StaffMonthRecord.aggregate([
-      { $match: { userId: userObjectId, month: monthStr } },
+      { $match: { accountId: accountObjectId, month: monthStr } },
       {
         $group: {
           _id: null,
@@ -417,7 +418,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     ]),
     // 10. ALL-TIME CUSTOMER SALES OUTSTANDING
     Sale.aggregate([
-      { $match: { userId: userObjectId, saleType: "customer" } },
+      { $match: { accountId: accountObjectId, saleType: "customer" } },
       {
         $group: {
           _id: null,
@@ -429,7 +430,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     ]),
     // 11. ALL-TIME DELIVERY BILLING DUE — JOINS WITH CUSTOMERS
     DeliveryRecord.aggregate([
-      { $match: { userId: userObjectId, status: "delivered" } },
+      { $match: { accountId: accountObjectId, status: "delivered" } },
       { $group: { _id: "$customerId", totalMilk: { $sum: "$milkQuantity" } } },
       {
         $lookup: {
@@ -453,11 +454,10 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     ]),
     // 12. ALL-TIME DELIVERY PAYMENTS RECEIVED
     Payment.aggregate([
-      { $match: { userId: userObjectId } },
+      { $match: { accountId: accountObjectId } },
       { $group: { _id: null, totalPaid: { $sum: "$amount" } } },
     ]),
   ]);
-
   // INITIALIZING SALES BREAKDOWN MAP
   const sbMap = {};
   // LOOP THROUGH SALES BREAKDOWN AND POPULATE MAP
@@ -492,6 +492,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
   const totalSalesRevenue = sf(totalCustomerSales + totalShopSales);
   // INITIALIZING QUICK SALES BREAKDOWN MAP
   const qsMap = {};
+  // LOOP THROUGH QUICK SALES AND POPULATE MAP
   quickSalesAgg.forEach(({ _id, total, qty, count }) => {
     // POPULATE QUICK SALES BREAKDOWN MAP
     qsMap[_id] = {
@@ -520,7 +521,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     (purchRaw.totalMilk ?? 0) > 0
       ? sf(purchRaw.totalCost / purchRaw.totalMilk)
       : 0;
-  // INITIALIZING EXPENDITURES AGGREGATE
+  // INITIALIZING EXPENDITURES MAP AND TOTAL
   const expMap = {};
   // INITIALIZING EXPENDITURES TOTAL
   let totalExpAmount = 0;
@@ -531,9 +532,9 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
     // UPDATE EXPENDITURES TOTAL
     totalExpAmount += amount;
   });
-  // CALCULATING TOTAL EXPENDITURES
+  // ROUNDING EXPENDITURES TOTAL
   totalExpAmount = sf(totalExpAmount);
-  // INITIALIZING DELIVERY STATUS AGGREGATE
+  // INITIALIZING DELIVERY STATUS MAP
   const delivMap = {};
   // LOOP THROUGH DELIVERY STATUS AND POPULATE MAP
   deliveryStatusAgg.forEach(({ _id, count, totalMilk }) => {
@@ -542,14 +543,12 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
       // COUNT OF DELIVERIES
       count,
       // TOTAL MILK
-      totalMilk:
-        // QUANTITY OF MILK
-        sf(totalMilk, 3),
+      totalMilk: sf(totalMilk, 3),
     };
   });
-  // CALCULATING TOTAL DELIVERIES
+  // CALCULATING DELIVERED STATS
   const deliveredStats = delivMap["delivered"] || { count: 0, totalMilk: 0 };
-  // CALCULATING TOTAL MISSED DELIVERIES
+  // CALCULATING MISSED STATS
   const missedStats = delivMap["missed"] || { count: 0, totalMilk: 0 };
   // CALCULATING MONTHLY BILLING DUE
   const monthlyBillingDue = sf(deliveryBillingAgg[0]?.monthlyBillingDue ?? 0);
@@ -559,7 +558,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
   const monthlyBillingPending = sf(
     Math.max(0, monthlyBillingDue - monthlyBillingPaid),
   );
-  // CALCULATING TOTAL DELIVERY DAYS
+  // CALCULATING TOTAL DELIVERY DAYS FOR RATE CALCULATION
   const totalDeliveries = deliveredStats.count + missedStats.count;
   // CALCULATING DELIVERY RATE
   const deliveryRate =
@@ -568,7 +567,7 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
       : 0;
   // INITIALIZING STAFF AGGREGATE
   const staffRaw = staffCountAgg[0] || {};
-  // CALCULATING MONTHLY STAFF COUNT RAW
+  // INITIALIZING STAFF MONTH AGGREGATE
   const staffMonthRaw = staffMonthAgg[0] || {};
   // CALCULATING STAFF COUNT
   const totalStaff = staffRaw.totalStaff ?? 0;
@@ -584,13 +583,13 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
   const totalMonthlyOutgo = sf(totalSalaryBill + totalExtraAllocated);
   // CALCULATING STAFF PENDING
   const staffPending = sf(Math.max(0, totalSalaryBill - staffPaid));
-  // CALCULATING TOTAL SALES OUTSTANDING
-  const salesOutRaw = salesOutstandingAgg[0] || {};
   // CALCULATING SALES OUTSTANDING
+  const salesOutRaw = salesOutstandingAgg[0] || {};
+  // CALCULATING SALES OUTSTANDING AMOUNT
   const salesOutstanding = sf(salesOutRaw.outstanding ?? 0);
-  // CALCULATING ALL TIME DELIVERY OUTSTANDING
+  // CALCULATING ALL-TIME DELIVERY DUE
   const allTimeDelivDue = sf(allTimeDelivBillingAgg[0]?.allTimeDue ?? 0);
-  // CALCULATING ALL TIME PAYMENTS PAID
+  // CALCULATING ALL-TIME PAYMENTS PAID
   const allTimePaymentsPaid = sf(allTimePaymentsAgg[0]?.totalPaid ?? 0);
   // CALCULATING DELIVERY OUTSTANDING
   const deliveryOutstanding = sf(
@@ -598,9 +597,9 @@ export const fetchMonthlyReportData = async (userId, monthStr) => {
   );
   // CALCULATING TOTAL OUTSTANDING
   const totalOutstanding = sf(salesOutstanding + deliveryOutstanding);
-  // CALCULATING TOTAL ALL TIME DUE
+  // CALCULATING TOTAL ALL-TIME DUE
   const totalAllTimeDue = sf((salesOutRaw.totalDue ?? 0) + allTimeDelivDue);
-  // CALCULATING TOTAL ALL TIME PAID
+  // CALCULATING TOTAL ALL-TIME PAID
   const totalAllTimePaid = sf(
     (salesOutRaw.totalPaid ?? 0) + allTimePaymentsPaid,
   );
