@@ -1,5 +1,6 @@
 // <== IMPORTS ==>
 import {
+  inviteTemplate,
   phoneChangeTemplate,
   emailChangeNewTemplate,
   passwordChangeTemplate,
@@ -146,5 +147,19 @@ export const sendMonthlyReport = async ({ to, fullName, data, month }) => {
     toName: fullName,
     subject: `Monthly Report — ${month}`,
     htmlContent: monthlyReportTemplate({ fullName, month, data }),
+  });
+};
+
+/**
+ * SEND ACCOUNT INVITE OTP TO THE INVITED USER'S EMAIL ADDRESS
+ */
+// <== SEND INVITE OTP ==>
+export const sendInviteOtp = async ({ to, fullName, code, role }) => {
+  // SENDING ACCOUNT INVITE EMAIL TO THE INVITED USER
+  await sendEmail({
+    to,
+    toName: fullName,
+    subject: "You've Been Invited — Complete Your Account Setup",
+    htmlContent: inviteTemplate({ fullName, code, role }),
   });
 };
