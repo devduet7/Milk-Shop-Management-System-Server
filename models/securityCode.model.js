@@ -15,6 +15,8 @@ export const SECURITY_CODE_PURPOSES = {
   FORGOT_PASSWORD_OTP: "forgot_password_otp",
   // <== SENT TO CURRENT EMAIL FOR PASSWORD RESET ==>
   FORGOT_PASSWORD_RESET: "forgot_password_reset",
+  // <== SENT TO INVITED USER'S EMAIL TO COMPLETE ACCOUNT SETUP ==>
+  ACCOUNT_INVITE: "account_invite",
 };
 
 // <== SECURITY CODE SCHEMA ==>
