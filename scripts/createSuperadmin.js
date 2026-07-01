@@ -32,10 +32,8 @@ const isValidPassword = (password) =>
 // <== CREATE SUPERADMIN ==>
 const createSuperadmin = async () => {
   try {
-    // CONNECTING TO THE DATABASE — REUSES THE SAME CONNECTION HELPER AS THE MAIN SERVER
+    // CONNECTING TO THE DATABASE
     await connectDB();
-    // WAITING FOR THE MONGOOSE CONNECTION TO BE FULLY OPEN BEFORE PROCEEDING
-    await new Promise((resolve) => mongoose.connection.once("open", resolve));
     // LOGGING CONNECTION SUCCESS
     console.log("Database Connection Established Successfully\n");
     // PROMPTING FOR BUSINESS NAME
