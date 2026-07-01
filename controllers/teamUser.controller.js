@@ -4,6 +4,7 @@ import {
   SECURITY_CODE_PURPOSES,
 } from "../models/securityCode.model.js";
 import bcrypt from "bcryptjs";
+import mongoose from "mongoose";
 import { randomUUID } from "crypto";
 import expressAsyncHandler from "express-async-handler";
 import { User, USER_ROLES } from "../models/user.model.js";
@@ -29,7 +30,8 @@ const buildSafeUser = (user) => ({
 
 /**
  * LIST ALL USERS UNDER THIS ACCOUNT WITH OPTIONAL SEARCH AND ROLE FILTER
- * ADMIN-AND-ABOVE ONLY — GATED AT ROUTER LEVEL
+ * STATS AGGREGATION RUNS AGAINST ALL ACCOUNT USERS — NOT FILTERED BY SEARCH/ROLE
+ * ALL THREE QUERIES (COUNT, PAGINATED FETCH, STATS AGG) RUN IN PARALLEL VIA PROMISE.ALL
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
@@ -48,6 +50,8 @@ export const listUsers = expressAsyncHandler(async (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
   // CALCULATING SKIP
   const skip = (page - 1) * limit;
+  // CONVERTING ACCOUNT ID TO OBJECTID FOR AGGREGATION PIPELINE
+  const accountObjectId = new mongoose.Types.ObjectId(accountId);
   // BUILDING BASE QUERY — SCOPED TO THIS ACCOUNT
   const matchQuery = { accountId };
   // APPLYING SEARCH FILTER IF PROVIDED — SEARCHES FULL NAME AND EMAIL
@@ -60,9 +64,11 @@ export const listUsers = expressAsyncHandler(async (req, res) => {
   }
   // APPLYING ROLE FILTER IF PROVIDED
   if (roleFilter) matchQuery.role = roleFilter;
-  // FETCHING TOTAL COUNT AND PAGINATED USERS IN PARALLEL
-  const [total, users] = await Promise.all([
+  // RUNNING COUNT, PAGINATED FETCH, AND ACCOUNT-WIDE STATS IN PARALLEL
+  const [total, users, [statsRaw]] = await Promise.all([
+    // TOTAL COUNT FOR PAGINATION
     User.countDocuments(matchQuery),
+    // PAGINATED USERS — CREATED BY POPULATED WITH fullName ONLY
     User.find(matchQuery)
       .populate("createdBy", "fullName")
       .sort({ createdAt: -1 })
@@ -70,15 +76,49 @@ export const listUsers = expressAsyncHandler(async (req, res) => {
       .limit(limit)
       .lean()
       .exec(),
+    // ACCOUNT-WIDE STATS — SINGLE AGGREGATION FOR ALL FOUR METRICS
+    User.aggregate([
+      { $match: { accountId: accountObjectId } },
+      {
+        $group: {
+          _id: null,
+          // TOTAL MEMBER COUNT
+          totalMembers: { $sum: 1 },
+          // ACTIVE MEMBER COUNT
+          activeMembers: {
+            $sum: { $cond: [{ $eq: ["$isActive", true] }, 1, 0] },
+          },
+          // PENDING SETUP COUNT (INVITED BUT NOT YET COMPLETED ACCOUNT SETUP)
+          pendingSetup: {
+            $sum: { $cond: [{ $eq: ["$hasSetPassword", false] }, 1, 0] },
+          },
+          // ADMINS COUNT — INCLUDES BOTH SUPERADMIN AND ADMIN ROLES
+          adminsCount: {
+            $sum: {
+              $cond: [{ $in: ["$role", ["superadmin", "admin"]] }, 1, 0],
+            },
+          },
+        },
+      },
+    ]),
   ]);
   // CALCULATING TOTAL PAGES
   const totalPages = Math.ceil(total / limit);
-  // RETURNING SUCCESS RESPONSE WITH PAGINATED SAFE USER OBJECTS
+  // MAPPING USERS THROUGH SAFE USER BUILDER TO STRIP SENSITIVE FIELDS
+  const records = users.map(buildSafeUser);
+  // EXTRACTING STATS WITH FALLBACKS — STATS RAW IS UNDEFINED IF ACCOUNT HAS NO USERS YET
+  const stats = {
+    totalMembers: statsRaw?.totalMembers ?? 0,
+    activeMembers: statsRaw?.activeMembers ?? 0,
+    pendingSetup: statsRaw?.pendingSetup ?? 0,
+    adminsCount: statsRaw?.adminsCount ?? 0,
+  };
+  // RETURNING SUCCESS RESPONSE WITH PAGINATED SAFE USER OBJECTS AND ACCOUNT-WIDE STATS
   res.status(200).json({
     message: "Team Members Fetched Successfully!",
     success: true,
     data: {
-      records: users.map(buildSafeUser),
+      records,
       pagination: {
         total,
         page,
@@ -87,6 +127,7 @@ export const listUsers = expressAsyncHandler(async (req, res) => {
         hasNextPage: page < totalPages,
         hasPrevPage: page > 1,
       },
+      stats,
     },
   });
   // RETURNING FROM FUNCTION
@@ -107,7 +148,7 @@ export const inviteUser = expressAsyncHandler(async (req, res) => {
   const accountId = req.accountId;
   // GETTING ACTOR'S ROLE FROM REQUEST
   const actorRole = req.role;
-  // GETTING ACTOR'S ID FOR createdBy ATTRIBUTION
+  // GETTING ACTOR'S ID FOR CREATED BY ATTRIBUTION
   const actorId = req.id;
   // GETTING INVITE DATA FROM REQUEST BODY
   const { fullName, email, role, permissions } = req.body;
