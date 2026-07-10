@@ -14,6 +14,10 @@ import { sendInviteOtp } from "../services/emailService.js";
 const generateOtpCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
+// <== HELPER: BUILD THE ACCOUNT SETUP LINK FOR AN INVITED USER ==>
+const buildSetupUrl = (email) =>
+  `${process.env.CLIENT_URL}/setup?email=${encodeURIComponent(email)}`;
+
 // <== HELPER: BUILD SAFE USER OBJECT FOR API RESPONSES ==>
 const buildSafeUser = (user) => ({
   _id: user._id,
@@ -219,6 +223,7 @@ export const inviteUser = expressAsyncHandler(async (req, res) => {
     fullName: invitedUser.fullName,
     code,
     role: invitedUser.role,
+    setupUrl: buildSetupUrl(invitedUser.email),
   });
   // RETURNING SUCCESS RESPONSE WITH SAFE INVITED USER DATA
   res.status(201).json({
@@ -307,6 +312,7 @@ export const resendInvite = expressAsyncHandler(async (req, res) => {
     fullName: targetUser.fullName,
     code,
     role: targetUser.role,
+    setupUrl: buildSetupUrl(targetUser.email),
   });
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
