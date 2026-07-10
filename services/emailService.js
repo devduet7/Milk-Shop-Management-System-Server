@@ -154,12 +154,12 @@ export const sendMonthlyReport = async ({ to, fullName, data, month }) => {
  * SEND ACCOUNT INVITE OTP TO THE INVITED USER'S EMAIL ADDRESS
  */
 // <== SEND INVITE OTP ==>
-export const sendInviteOtp = async ({ to, fullName, code, role }) => {
+export const sendInviteOtp = async ({ to, fullName, code, role, setupUrl }) => {
   // SENDING ACCOUNT INVITE EMAIL TO THE INVITED USER
   await sendEmail({
     to,
     toName: fullName,
     subject: "You've Been Invited — Complete Your Account Setup",
-    htmlContent: inviteTemplate({ fullName, code, role }),
+    htmlContent: inviteTemplate({ fullName, code, role, setupUrl }),
   });
 };
