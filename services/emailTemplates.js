@@ -153,7 +153,7 @@ export const forgotPasswordTemplate = ({ fullName, code }) =>
   });
 
 // <== ACCOUNT INVITE TEMPLATE ==>
-export const inviteTemplate = ({ fullName, code, role }) =>
+export const inviteTemplate = ({ fullName, code, role, setupUrl }) =>
   baseLayout({
     title: "You've Been Invited — Complete Your Account Setup",
     preheader: `Your setup code is ${code}. Valid for 48 hours.`,
@@ -162,9 +162,12 @@ export const inviteTemplate = ({ fullName, code, role }) =>
       <p style="margin:0;text-align:center;color:#64748b;font-size:15px;line-height:1.7;">
         You've been added to a Milk Shop Management account as
         <strong style="color:#0f172a;">${role === "admin" ? "an Admin" : "a Team Member"}</strong>.<br/>
-        Use the setup code below to complete your account and set your password.
+        Click the button below to get started, then enter the code from this email.
       </p>
-      <div style="text-align:center;margin:28px 0 24px;">
+      <div style="text-align:center;margin:26px 0 22px;">
+        <a href="${setupUrl}" style="display:inline-block;background:linear-gradient(135deg,#6366f1 0%,#7c3aed 100%);color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;padding:14px 38px;border-radius:10px;">Complete Account Setup →</a>
+      </div>
+      <div style="text-align:center;margin:0 0 24px;">
         <div style="display:inline-block;background-color:#fafafa;border:2px dashed #6366f1;border-radius:14px;padding:22px 44px;">
           <p style="margin:0 0 8px;font-size:11px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:#94a3b8;">Your Setup Code</p>
           <p style="margin:0;font-size:44px;font-weight:900;letter-spacing:12px;color:#6366f1;font-family:'Courier New',Courier,monospace;line-height:1.1;">${code}</p>
@@ -172,8 +175,9 @@ export const inviteTemplate = ({ fullName, code, role }) =>
         <p style="margin:14px 0 0;font-size:13px;color:#ef4444;font-weight:600;">⏱&nbsp; Expires in 48 hours</p>
       </div>
       <div style="background-color:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 18px;text-align:center;margin-bottom:16px;">
-        <p style="margin:0;color:#1d4ed8;font-size:13px;line-height:1.6;">
-          ℹ Go to the <strong>Account Setup</strong> page and enter your email address along with this code to set your password.
+        <p style="margin:0;color:#1d4ed8;font-size:13px;line-height:1.6;word-break:break-all;">
+          ℹ If the button does not work, copy and paste this link into your browser:<br/>
+          <a href="${setupUrl}" style="color:#1d4ed8;">${setupUrl}</a>
         </p>
       </div>
       <p style="margin:0;text-align:center;color:#94a3b8;font-size:13px;line-height:1.6;">
