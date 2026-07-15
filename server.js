@@ -14,6 +14,7 @@ import corsOptions from "./config/corsOptions.js";
 import { logEvents } from "./middleware/logger.js";
 import { getDirName } from "./utils/getDirName.js";
 import { app, server } from "./services/socket.js";
+import sessionRoutes from "./routes/session.route.js";
 import teamUserRoutes from "./routes/teamUser.route.js";
 import settingsRoutes from "./routes/settings.route.js";
 import recoveryRoutes from "./routes/recovery.route.js";
@@ -39,6 +40,8 @@ const PORT = process.env.PORT || 3000;
 // <== MIDDLEWARE> ==>
 // CORS MIDDLEWARE
 app.use(cors(corsOptions));
+// TRUST PROXY MIDDLEWARE
+app.set("trust proxy", 1);
 // JSON MIDDLEWARE
 app.use(express.json());
 // FORM DATA MIDDLEWARE
@@ -61,6 +64,8 @@ app.use("/api/v1/sales", saleRoutes);
 app.use("/api/v1/staff", staffRoutes);
 // TEAM USER MANAGEMENT ROUTE
 app.use("/api/v1/users", teamUserRoutes);
+// SESSION MANAGEMENT ROUTE
+app.use("/api/v1/sessions", sessionRoutes);
 // SETTINGS ROUTE
 app.use("/api/v1/settings", settingsRoutes);
 // PURCHASE ROUTE
