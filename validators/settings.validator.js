@@ -1,4 +1,8 @@
 // <== IMPORTS ==>
+import {
+  DELETION_MODES,
+  TRASH_RETENTION_OPTIONS,
+} from "../models/account.model.js";
 import { body, param } from "express-validator";
 import { handleValidationErrors } from "./user.validator.js";
 import { SECURITY_CODE_PURPOSES } from "../models/securityCode.model.js";
@@ -117,6 +121,22 @@ export const validateUpdateReportSettings = [
     .optional({ nullable: true })
     .isBoolean()
     .withMessage("Monthly Reports Enabled must be a Boolean!"),
+  // HANDLING VALIDATION ERRORS
+  handleValidationErrors,
+];
+
+// <== UPDATE TRASH SETTINGS VALIDATION ==>
+export const validateUpdateTrashSettings = [
+  // VALIDATING OPTIONAL DELETION MODE
+  body("deletionMode")
+    .optional({ nullable: true, checkFalsy: true })
+    .isIn(Object.values(DELETION_MODES))
+    .withMessage("Deletion Mode must be either 'instant' or 'trash'!"),
+  // VALIDATING OPTIONAL TRASH RETENTION DAYS
+  body("trashRetentionDays")
+    .optional({ nullable: true, checkFalsy: true })
+    .isIn(TRASH_RETENTION_OPTIONS)
+    .withMessage("Trash Retention Days must be 7, 15, or 30!"),
   // HANDLING VALIDATION ERRORS
   handleValidationErrors,
 ];

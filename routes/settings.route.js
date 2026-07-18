@@ -8,6 +8,7 @@ import {
   validateResetForgotPassword,
   validateInitiatePhoneChange,
   validateInitiateEmailChange,
+  validateUpdateTrashSettings,
   validateUpdateReportSettings,
   validateCancelForgotPassword,
   validateInitiateForgotPassword,
@@ -26,6 +27,7 @@ import {
   resetForgotPassword,
   initiatePhoneChange,
   initiateEmailChange,
+  updateTrashSettings,
   verifyPasswordChange,
   cancelForgotPassword,
   updateReportSettings,
@@ -161,6 +163,13 @@ router.patch(
   requireRole("superadmin", "admin"),
   validateUpdateReportSettings,
   updateReportSettings,
+);
+// UPDATE TRASH SETTINGS (DELETION MODE + RETENTION DAYS — ACCOUNT-LEVEL, AFFECTS ALL USERS)
+router.patch(
+  "/trash",
+  requireRole("superadmin", "admin"),
+  validateUpdateTrashSettings,
+  updateTrashSettings,
 );
 
 // <== EXPORTING ROUTER ==>

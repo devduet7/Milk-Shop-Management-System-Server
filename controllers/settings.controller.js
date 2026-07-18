@@ -35,6 +35,8 @@ const buildUserProfile = (user, account) => ({
   yoghurtRate: account?.yoghurtRate ?? 180,
   dailyReportsEnabled: account?.dailyReportsEnabled ?? false,
   monthlyReportsEnabled: account?.monthlyReportsEnabled ?? false,
+  deletionMode: account?.deletionMode ?? "trash",
+  trashRetentionDays: account?.trashRetentionDays ?? 30,
 });
 
 // <== HELPER: VERIFY AND CONSUME A SECURITY CODE ==>
@@ -902,6 +904,50 @@ export const updateReportSettings = expressAsyncHandler(async (req, res) => {
   // RETURNING UPDATED PROFILE
   res.status(200).json({
     message: "Report Settings Updated Successfully!",
+    success: true,
+    data: buildUserProfile(user, account),
+  });
+  // RETURNING FROM FUNCTION
+  return;
+});
+
+/**
+ * UPDATE TRASH SETTINGS — UPDATES DELETION MODE AND/OR RETENTION DAYS ON THE ACCOUNT DOCUMENT
+ * ADMIN-AND-ABOVE ONLY — TRASH SETTINGS ARE BUSINESS-WIDE CONFIGURATION, NEVER DELEGABLE
+ * @param {import("express").Request} req - Request Object
+ * @param {import("express").Response} res - Response Object
+ * @returns {Promise<void>}
+ */
+// <== UPDATE TRASH SETTINGS ==>
+export const updateTrashSettings = expressAsyncHandler(async (req, res) => {
+  // GETTING USER ID AND ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const userId = req.id;
+  // GETTING ACCOUNT ID — TRASH SETTINGS ARE ACCOUNT-LEVEL, NOT PER-USER
+  const accountId = req.accountId;
+  // GETTING TRASH SETTING VALUES FROM REQUEST BODY
+  const { deletionMode, trashRetentionDays } = req.body;
+  // BUILDING PARTIAL UPDATE OBJECT WITH ONLY PROVIDED FIELDS
+  const updates = {};
+  // APPLYING DELETION MODE IF PROVIDED
+  if (deletionMode !== undefined) updates.deletionMode = deletionMode;
+  // APPLYING TRASH RETENTION DAYS IF PROVIDED
+  if (trashRetentionDays !== undefined)
+    updates.trashRetentionDays = parseInt(trashRetentionDays, 10);
+  // UPDATING ACCOUNT DOCUMENT WITH NEW TRASH SETTINGS AND FETCHING USER IN PARALLEL
+  const [account, user] = await Promise.all([
+    Account.findByIdAndUpdate(accountId, updates, { new: true }).lean().exec(),
+    User.findById(userId).lean().exec(),
+  ]);
+  // IF ACCOUNT NOT FOUND
+  if (!account) {
+    // RETURNING ERROR RESPONSE
+    res.status(404).json({ message: "Account Not Found!", success: false });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // RETURNING UPDATED PROFILE
+  res.status(200).json({
+    message: "Trash Settings Updated Successfully!",
     success: true,
     data: buildUserProfile(user, account),
   });
