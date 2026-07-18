@@ -2,6 +2,8 @@
 import { Payment } from "../models/payment.model.js";
 import { Customer } from "../models/customer.model.js";
 import expressAsyncHandler from "express-async-handler";
+import { removeDocument } from "../services/trashService.js";
+import { TRASH_ENTITY_TYPES } from "../models/trash.model.js";
 import { DeliveryRecord } from "../models/deliveryRecord.model.js";
 
 // <== HELPER: GET CURRENT MONTH STRING ==>
@@ -595,6 +597,8 @@ export const updateCustomer = expressAsyncHandler(async (req, res) => {
 
 /**
  * DELETE A CUSTOMER (BLOCKED IF OUTSTANDING BALANCE EXISTS)
+ * RESPECTS THE ACCOUNT'S DELETION MODE PREFERENCE — MOVED TO TRASH OR HARD-DELETED
+ * WHEN TRASHED, ALL DELIVERY RECORDS AND PAYMENTS ARE CASCADE-EMBEDDED IN THE SAME TRASH ENTRY
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
@@ -603,10 +607,12 @@ export const updateCustomer = expressAsyncHandler(async (req, res) => {
 export const deleteCustomer = expressAsyncHandler(async (req, res) => {
   // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
   const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING CUSTOMER ID FROM REQUEST PARAMS
   const { id } = req.params;
   // FINDING CUSTOMER AND VERIFYING IT BELONGS TO THIS ACCOUNT
-  const customer = await Customer.findOne({ _id: id, accountId }).lean().exec();
+  const customer = await Customer.findOne({ _id: id, accountId }).exec();
   // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!customer) {
     // RETURNING NOT FOUND RESPONSE
@@ -617,13 +623,17 @@ export const deleteCustomer = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // FETCHING DELIVERED RECORDS AND ALL-TIME PAYMENTS IN PARALLEL FOR OUTSTANDING BALANCE CHECK
-  const [allDeliveredRecords, allPayments] = await Promise.all([
-    DeliveryRecord.find({ customerId: id, status: "delivered" }).lean().exec(),
+  // FETCHING ALL DELIVERY RECORDS (NOT JUST DELIVERED) AND ALL PAYMENTS IN PARALLEL
+  const [allDeliveryRecords, allPayments] = await Promise.all([
+    DeliveryRecord.find({ customerId: id }).lean().exec(),
     Payment.find({ customerId: id }).lean().exec(),
   ]);
+  // FILTERING DELIVERED RECORDS ONLY FOR THE OUTSTANDING BALANCE CALCULATION
+  const deliveredRecords = allDeliveryRecords.filter(
+    (d) => d.status === "delivered",
+  );
   // CALCULATING ALL-TIME TOTAL MILK DELIVERED FOR THIS CUSTOMER
-  const totalMilkDeliveredAllTime = allDeliveredRecords.reduce(
+  const totalMilkDeliveredAllTime = deliveredRecords.reduce(
     (sum, d) => sum + d.milkQuantity,
     0,
   );
@@ -650,15 +660,22 @@ export const deleteCustomer = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // DELETING CUSTOMER AND ALL RELATED RECORDS IN PARALLEL TO MINIMIZE RESPONSE TIME
-  await Promise.all([
-    Customer.deleteOne({ _id: id, accountId }),
-    DeliveryRecord.deleteMany({ customerId: id }),
-    Payment.deleteMany({ customerId: id }),
-  ]);
+  // REMOVING CUSTOMER (RESPECTS ACCOUNT DELETION MODE PREFERENCE)
+  const { trashed } = await removeDocument({
+    accountId,
+    entityType: TRASH_ENTITY_TYPES.CUSTOMER,
+    document: customer,
+    performedBy,
+    relatedDocuments: {
+      [DeliveryRecord.modelName]: allDeliveryRecords,
+      [Payment.modelName]: allPayments,
+    },
+  });
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
-    message: "Customer Deleted Successfully!",
+    message: trashed
+      ? "Customer Moved to Trash!"
+      : "Customer Deleted Successfully!",
     success: true,
   });
   // RETURNING FROM FUNCTION
