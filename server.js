@@ -11,6 +11,7 @@ import userRoutes from "./routes/user.route.js";
 import connectDB from "./config/dbConnection.js";
 import staffRoutes from "./routes/staff.route.js";
 import corsOptions from "./config/corsOptions.js";
+import trashRoutes from "./routes/trash.route.js";
 import { logEvents } from "./middleware/logger.js";
 import { getDirName } from "./utils/getDirName.js";
 import { app, server } from "./services/socket.js";
@@ -62,6 +63,8 @@ app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/sales", saleRoutes);
 // STAFF ROUTE
 app.use("/api/v1/staff", staffRoutes);
+// TRASH ROUTE
+app.use("/api/v1/trash", trashRoutes);
 // TEAM USER MANAGEMENT ROUTE
 app.use("/api/v1/users", teamUserRoutes);
 // SESSION MANAGEMENT ROUTE
