@@ -2,6 +2,8 @@
 import mongoose from "mongoose";
 import expressAsyncHandler from "express-async-handler";
 import { StaffMember } from "../models/staffMember.model.js";
+import { removeDocument } from "../services/trashService.js";
+import { TRASH_ENTITY_TYPES } from "../models/trash.model.js";
 import { StaffMonthRecord } from "../models/staffMonthRecord.model.js";
 import { StaffExtraAllocation } from "../models/staffExtraAllocation.model.js";
 
@@ -275,6 +277,8 @@ export const updateStaff = expressAsyncHandler(async (req, res) => {
 
 /**
  * DELETE A STAFF MEMBER AND ALL RELATED MONTH RECORDS AND EXTRA ALLOCATIONS
+ * RESPECTS THE ACCOUNT'S DELETION MODE PREFERENCE — MOVED TO TRASH OR HARD-DELETED
+ * WHEN TRASHED, ALL MONTH RECORDS AND EXTRA ALLOCATIONS ARE CASCADE-EMBEDDED IN THE SAME TRASH ENTRY
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
@@ -283,12 +287,12 @@ export const updateStaff = expressAsyncHandler(async (req, res) => {
 export const deleteStaff = expressAsyncHandler(async (req, res) => {
   // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
   const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING STAFF MEMBER ID FROM REQUEST PARAMS
   const { id } = req.params;
   // FINDING STAFF MEMBER AND VERIFYING IT BELONGS TO THIS ACCOUNT
-  const staffMember = await StaffMember.findOne({ _id: id, accountId })
-    .lean()
-    .exec();
+  const staffMember = await StaffMember.findOne({ _id: id, accountId }).exec();
   // IF STAFF MEMBER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!staffMember) {
     // RETURNING NOT FOUND RESPONSE
@@ -298,18 +302,27 @@ export const deleteStaff = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // DELETING STAFF MEMBER AND ALL RELATED RECORDS IN PARALLEL
-  await Promise.all([
-    // DELETE STAFF MEMBER DOCUMENT WITH ACCOUNT SCOPING FOR DEFENSE IN DEPTH
-    StaffMember.deleteOne({ _id: id, accountId }),
-    // CASCADE DELETE ALL MONTH RECORDS FOR THIS STAFF MEMBER
-    StaffMonthRecord.deleteMany({ staffId: id }),
-    // CASCADE DELETE ALL EXTRA ALLOCATIONS FOR THIS STAFF MEMBER
-    StaffExtraAllocation.deleteMany({ staffId: id }),
+  // FETCHING ALL MONTH RECORDS AND EXTRA ALLOCATIONS FOR THIS STAFF MEMBER
+  const [monthRecords, extraAllocations] = await Promise.all([
+    StaffMonthRecord.find({ staffId: id }).lean().exec(),
+    StaffExtraAllocation.find({ staffId: id }).lean().exec(),
   ]);
+  // REMOVING STAFF MEMBER (RESPECTS ACCOUNT DELETION MODE PREFERENCE)
+  const { trashed } = await removeDocument({
+    accountId,
+    entityType: TRASH_ENTITY_TYPES.STAFF_MEMBER,
+    document: staffMember,
+    performedBy,
+    relatedDocuments: {
+      [StaffMonthRecord.modelName]: monthRecords,
+      [StaffExtraAllocation.modelName]: extraAllocations,
+    },
+  });
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
-    message: `${staffMember.name} Deleted Successfully!`,
+    message: trashed
+      ? `${staffMember.name} Moved to Trash!`
+      : `${staffMember.name} Deleted Successfully!`,
     success: true,
   });
   // RETURNING FROM FUNCTION
