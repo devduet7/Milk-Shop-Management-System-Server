@@ -2,6 +2,8 @@
 import mongoose from "mongoose";
 import { Sale } from "../models/sale.model.js";
 import expressAsyncHandler from "express-async-handler";
+import { removeDocument } from "../services/trashService.js";
+import { TRASH_ENTITY_TYPES } from "../models/trash.model.js";
 
 // <== HELPER: GET CURRENT MONTH STRING ==>
 const getCurrentMonthStr = () => {
@@ -448,6 +450,7 @@ export const updateSale = expressAsyncHandler(async (req, res) => {
 
 /**
  * DELETE A SALE RECORD
+ * RESPECTS THE ACCOUNT'S DELETION MODE PREFERENCE — MOVED TO TRASH OR HARD-DELETED
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
@@ -456,12 +459,12 @@ export const updateSale = expressAsyncHandler(async (req, res) => {
 export const deleteSale = expressAsyncHandler(async (req, res) => {
   // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
   const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING SALE ID FROM REQUEST PARAMS
   const { id } = req.params;
-  // FINDING AND DELETING IN A SINGLE ATOMIC ROUND TRIP
-  const sale = await Sale.findOneAndDelete({ _id: id, accountId })
-    .lean()
-    .exec();
+  // FINDING SALE AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const sale = await Sale.findOne({ _id: id, accountId }).exec();
   // IF SALE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!sale) {
     // RETURNING NOT FOUND RESPONSE
@@ -472,9 +475,16 @@ export const deleteSale = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
+  // REMOVING SALE (RESPECTS ACCOUNT DELETION MODE PREFERENCE)
+  const { trashed } = await removeDocument({
+    accountId,
+    entityType: TRASH_ENTITY_TYPES.SALE,
+    document: sale,
+    performedBy,
+  });
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
-    message: "Sale Deleted Successfully!",
+    message: trashed ? "Sale Moved to Trash!" : "Sale Deleted Successfully!",
     success: true,
   });
   // RETURNING FROM FUNCTION
