@@ -2,6 +2,8 @@
 import mongoose from "mongoose";
 import expressAsyncHandler from "express-async-handler";
 import { Expenditure } from "../models/expenditure.model.js";
+import { removeDocument } from "../services/trashService.js";
+import { TRASH_ENTITY_TYPES } from "../models/trash.model.js";
 
 // <== HELPER: GET CURRENT MONTH STRING ==>
 const getCurrentMonthStr = () => {
@@ -332,6 +334,7 @@ export const updateExpenditure = expressAsyncHandler(async (req, res) => {
 
 /**
  * DELETE AN EXPENDITURE RECORD
+ * RESPECTS THE ACCOUNT'S DELETION MODE PREFERENCE — MOVED TO TRASH OR HARD-DELETED
  * @param {import("express").Request} req - Request Object
  * @param {import("express").Response} res - Response Object
  * @returns {Promise<void>}
@@ -340,12 +343,12 @@ export const updateExpenditure = expressAsyncHandler(async (req, res) => {
 export const deleteExpenditure = expressAsyncHandler(async (req, res) => {
   // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
   const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING EXPENDITURE ID FROM REQUEST PARAMS
   const { id } = req.params;
-  // FINDING AND DELETING IN A SINGLE ATOMIC ROUND TRIP
-  const expenditure = await Expenditure.findOneAndDelete({ _id: id, accountId })
-    .lean()
-    .exec();
+  // FINDING EXPENDITURE AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const expenditure = await Expenditure.findOne({ _id: id, accountId }).exec();
   // IF EXPENDITURE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!expenditure) {
     // RETURNING NOT FOUND RESPONSE
@@ -356,9 +359,18 @@ export const deleteExpenditure = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
+  // REMOVING EXPENDITURE (RESPECTS ACCOUNT DELETION MODE PREFERENCE)
+  const { trashed } = await removeDocument({
+    accountId,
+    entityType: TRASH_ENTITY_TYPES.EXPENDITURE,
+    document: expenditure,
+    performedBy,
+  });
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
-    message: "Expenditure Deleted Successfully!",
+    message: trashed
+      ? "Expenditure Moved to Trash!"
+      : "Expenditure Deleted Successfully!",
     success: true,
   });
   // RETURNING FROM FUNCTION
