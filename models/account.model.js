@@ -3,11 +3,22 @@ import mongoose from "mongoose";
 
 // <== ACCOUNT STATUS CONSTANTS ==>
 export const ACCOUNT_STATUSES = {
-  // <== ACCOUNT IS ACTIVE AND CAN BE LOGGED INTO ==>
+  // <== ACCOUNT IS ACTIVE ==>
   ACTIVE: "active",
-  // <== ACCOUNT HAS BEEN SUSPENDED — ALL USERS UNDER IT ARE BLOCKED FROM LOGGING IN ==>
+  // <== ACCOUNT HAS BEEN SUSPENDED ==>
   SUSPENDED: "suspended",
 };
+
+// <== DELETION MODE CONSTANTS ==>
+export const DELETION_MODES = {
+  // <== DELETES ACROSS THIS ACCOUNT GO TO TRASH ==>
+  TRASH: "trash",
+  // <== DELETES ACROSS THIS ACCOUNT ARE REMOVED INSTANTLY ==>
+  INSTANT: "instant",
+};
+
+// <== TRASH RETENTION DAYS CONSTANTS — THE ONLY ALLOWED AUTO-PURGE WINDOWS ==>
+export const TRASH_RETENTION_OPTIONS = [7, 15, 30];
 
 // <== ACCOUNT SCHEMA ==>
 const accountSchema = new mongoose.Schema(
@@ -76,6 +87,18 @@ const accountSchema = new mongoose.Schema(
         /^\d{4}-\d{2}$/,
         "Last Monthly Report Sent Date must be in YYYY-MM Format!",
       ],
+    },
+    // DELETION MODE FIELD — WHETHER DELETES ACROSS THIS ACCOUNT GO TO TRASH OR ARE REMOVED INSTANTLY
+    deletionMode: {
+      type: String,
+      enum: Object.values(DELETION_MODES),
+      default: DELETION_MODES.TRASH,
+    },
+    // TRASH RETENTION DAYS FIELD — HOW LONG TRASHED ITEMS ARE KEPT BEFORE AUTO-PURGE
+    trashRetentionDays: {
+      type: Number,
+      enum: TRASH_RETENTION_OPTIONS,
+      default: 30,
     },
   },
   { timestamps: true },
