@@ -7,6 +7,25 @@ import { Account, DELETION_MODES } from "../models/account.model.js";
 const resolveExpiresAt = (retentionDays) =>
   new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000);
 
+// <== HELPER FUNCTION TO CASCADE DELETE RELATED CHILD DOCUMENTS ==>
+const cascadeDeleteRelated = async (relatedDocuments) => {
+  // IF NO RELATED DOCUMENTS WERE PASSED, NOTHING TO DO
+  if (!relatedDocuments) return;
+  // DELETING EACH RELATED COLLECTION'S DOCUMENTS IN PARALLEL
+  await Promise.all(
+    Object.entries(relatedDocuments).map(([modelName, documents]) => {
+      // SKIPPING EMPTY GROUPS
+      if (!documents || documents.length === 0) return null;
+      // RESOLVING THE RELATED MODEL DYNAMICALLY BY ITS REGISTERED NAME
+      const RelatedModel = mongoose.model(modelName);
+      // DELETING ALL RELATED DOCUMENTS BY THEIR ORIGINAL _id
+      return RelatedModel.deleteMany({
+        _id: { $in: documents.map((doc) => doc._id) },
+      });
+    }),
+  );
+};
+
 /**
  * MOVE A DOCUMENT TO TRASH OR HARD-DELETE IT, DEPENDING ON THE ACCOUNT'S DELETION MODE PREFERENCE
  * CALLER IS RESPONSIBLE FOR ALL BUSINESS-RULE GUARDS (E.G. OUTSTANDING BALANCE CHECKS) BEFORE CALLING THIS
@@ -15,6 +34,7 @@ const resolveExpiresAt = (retentionDays) =>
  * @param {string} params.entityType - ONE OF TRASH_ENTITY_TYPES — MUST MATCH THE MONGOOSE MODEL NAME
  * @param {import("mongoose").Document} params.document - THE MONGOOSE DOCUMENT INSTANCE TO REMOVE
  * @param {string} params.performedBy - USER ID PERFORMING THE DELETION
+ * @param {object} [params.relatedDocuments] - OPTIONAL OBJECT OF RELATED CHILD DOCUMENTS TO CASCADE DELETE
  * @returns {Promise<{ trashed: boolean }>} - TRASHED TRUE IF TRASHED OTHERWISE FALSE IF HARD-DELETED INSTANTLY
  */
 // <== REMOVE DOCUMENT (RESPECTS ACCOUNT DELETION MODE PREFERENCE) ==>
@@ -23,6 +43,7 @@ export const removeDocument = async ({
   entityType,
   document,
   performedBy,
+  relatedDocuments,
 }) => {
   // FETCHING THE ACCOUNT'S CURRENT DELETION PREFERENCE
   const account = await Account.findById(accountId)
@@ -33,8 +54,10 @@ export const removeDocument = async ({
   const deletionMode = account?.deletionMode || DELETION_MODES.TRASH;
   // IF ACCOUNT PREFERENCE IS INSTANT DELETE — HARD DELETE IMMEDIATELY, NO TRASH ENTRY CREATED
   if (deletionMode === DELETION_MODES.INSTANT) {
-    // HARD DELETING THE DOCUMENT
+    // HARD DELETING THE PARENT DOCUMENT
     await document.deleteOne();
+    // CASCADE HARD-DELETING ANY RELATED CHILD DOCUMENTS — PRESERVES TODAY'S EXISTING CASCADE BEHAVIOUR
+    await cascadeDeleteRelated(relatedDocuments);
     // RETURNING TRASHED: FALSE
     return { trashed: false };
   }
@@ -42,6 +65,11 @@ export const removeDocument = async ({
   const expiresAt = resolveExpiresAt(account?.trashRetentionDays || 30);
   // CONVERTING THE DOCUMENT TO A PLAIN SNAPSHOT OBJECT BEFORE DELETION
   const snapshot = document.toObject();
+  // EMBEDDING ANY RELATED CHILD DOCUMENTS INTO THE SNAPSHOT FOR RESTORATION LATER
+  if (relatedDocuments) {
+    // ADDING A SPECIAL RELATED DATA FIELD TO THE SNAPSHOT TO HOLD CASCADE-TRASHED CHILD DOCUMENTS
+    snapshot._relatedData = relatedDocuments;
+  }
   // CREATING THE TRASH ENTRY FIRST — IF THIS FAILS, THE ORIGINAL DOCUMENT IS UNTOUCHED
   await Trash.create({
     accountId,
@@ -51,8 +79,10 @@ export const removeDocument = async ({
     deletedBy: performedBy,
     expiresAt,
   });
-  // HARD DELETING THE ORIGINAL DOCUMENT ONLY AFTER THE TRASH ENTRY IS SAFELY PERSISTED
+  // HARD DELETING THE ORIGINAL PARENT DOCUMENT ONLY AFTER THE TRASH ENTRY IS SAFELY PERSISTED
   await document.deleteOne();
+  // CASCADE HARD-DELETING RELATED CHILD DOCUMENTS NOW THAT THEY ARE SAFELY SNAPSHOTTED IN THE TRASH ENTRY
+  await cascadeDeleteRelated(relatedDocuments);
   // RETURNING TRASHED: TRUE
   return { trashed: true };
 };
@@ -90,7 +120,7 @@ export const listTrash = async ({ accountId, entityType, page, limit }) => {
 };
 
 /**
- * RESTORE A TRASHED ITEM BACK INTO ITS ORIGINAL COLLECTION
+ * RESTORE A TRASHED ITEM BACK INTO ITS ORIGINAL COLLECTION, INCLUDING ANY CASCADE-TRASHED CHILDREN
  * REINSERTS THE SNAPSHOT WITH ITS ORIGINAL ID AND TIMESTAMPS INTACT — THIS IS WHAT KEEPS THE RESTORED
  * ITEM LINKED TO ITS ORIGINAL CREATED AT DAY/MONTH FOR EVERY DATE-SCOPED AGGREGATION IN THE APP
  * @param {object} params - PARAMETERS FOR RESTORATION
@@ -109,21 +139,35 @@ export const restoreFromTrash = async ({ accountId, trashId }) => {
     // RETURNING NULL — CALLER IS RESPONSIBLE FOR THE 404 RESPONSE
     return null;
   }
+  // SEPARATING EMBEDDED RELATED CHILD DATA FROM THE PARENT'S OWN SNAPSHOT FIELDS
+  const { _relatedData, ...parentSnapshot } = trashEntry.snapshot;
   // RESOLVING THE ORIGINAL MONGOOSE MODEL DYNAMICALLY BY ITS REGISTERED NAME
   const OriginalModel = mongoose.model(trashEntry.entityType);
-  // REINSERTING THE SNAPSHOT BACK INTO ITS ORIGINAL COLLECTION WITH ITS ORIGINAL ID AND TIMESTAMPS
-  await OriginalModel.collection.insertOne(trashEntry.snapshot);
-  // DELETING THE TRASH ENTRY NOW THAT THE ORIGINAL DOCUMENT IS BACK IN ITS COLLECTION
+  // REINSERTING THE PARENT SNAPSHOT BACK INTO ITS ORIGINAL COLLECTION WITH ITS ORIGINAL ID AND TIMESTAMPS
+  await OriginalModel.collection.insertOne(parentSnapshot);
+  // REINSERTING EVERY RELATED CHILD COLLECTION ALONGSIDE THE PARENT, IF ANY WERE CASCADE-TRASHED WITH IT
+  if (_relatedData) {
+    // BULK REINSERTING EACH RELATED COLLECTION'S DOCUMENTS IN PARALLEL
+    await Promise.all(
+      Object.entries(_relatedData).map(([modelName, documents]) => {
+        // SKIPPING EMPTY GROUPS
+        if (!documents || documents.length === 0) return null;
+        // BULK REINSERTING THIS CHILD COLLECTION'S DOCUMENTS
+        return mongoose.model(modelName).collection.insertMany(documents);
+      }),
+    );
+  }
+  // DELETING THE TRASH ENTRY NOW THAT EVERYTHING IS BACK IN ITS ORIGINAL COLLECTION
   await Trash.deleteOne({ _id: trashId });
-  // RETURNING THE RESTORED SNAPSHOT DATA
+  // RETURNING THE RESTORED PARENT SNAPSHOT DATA
   return trashEntry.snapshot;
 };
 
 /**
- * PERMANENTLY DELETE A SINGLE TRASH ENTRY — DISCARDS THE SNAPSHOT, UNRECOVERABLE
- * @param {object} params - PARAMETERS FOR PERMANENT DELETION
+ * PERMANENTLY DELETE A SINGLE TRASH ENTRY — DISCARDS THE SNAPSHOT
+ * @param {object} params - PARAMETERS FOR THE DELETION
  * @param {string} params.accountId - ACCOUNT ID FOR OWNERSHIP VERIFICATION
- * @param {string} params.trashId - THE Trash DOCUMENT'S ID
+ * @param {string} params.trashId - THE Trash DOCUMENT'S ID TO DELETE
  * @returns {Promise<boolean>} - TRUE IF A TRASH ENTRY WAS FOUND AND DELETED
  */
 // <== PERMANENTLY DELETE FROM TRASH ==>
@@ -136,8 +180,8 @@ export const permanentlyDeleteFromTrash = async ({ accountId, trashId }) => {
 
 /**
  * EMPTY THE ENTIRE TRASH FOR AN ACCOUNT, OPTIONALLY SCOPED TO A SINGLE CATEGORY
- * @param {object} params
- * @param {string} params.accountId
+ * @param {object} params - PARAMETERS FOR THE EMPTYING
+ * @param {string} params.accountId - ACCOUNT ID FOR OWNERSHIP VERIFICATION
  * @param {string} [params.entityType] - OPTIONAL CATEGORY SCOPE — IF OMITTED, EMPTIES EVERYTHING
  * @returns {Promise<number>} - COUNT OF DELETED TRASH ENTRIES
  */
