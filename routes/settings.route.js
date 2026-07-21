@@ -1,5 +1,10 @@
 // <== IMPORTS ==>
 import {
+  securityCodeLimiter,
+  avatarUploadLimiter,
+  forgotPasswordLimiter,
+} from "../middleware/rateLimiter.js";
+import {
   validateVerifyCode,
   validateUpdateAddress,
   validateUpdatePricing,
@@ -40,8 +45,8 @@ import {
 import multer from "multer";
 import express from "express";
 import { avatarUpload } from "../middleware/multer.js";
-import isAuthenticated from "../middleware/isAuthenticated.js";
 import { requireRole } from "../middleware/authorize.js";
+import isAuthenticated from "../middleware/isAuthenticated.js";
 
 // <== ROUTER ==>
 const router = express.Router();
@@ -50,24 +55,28 @@ const router = express.Router();
 // INITIATE FORGOT PASSWORD
 router.post(
   "/forgot-password/initiate",
+  forgotPasswordLimiter,
   validateInitiateForgotPassword,
   initiateForgotPassword,
 );
 // VERIFY FORGOT PASSWORD OTP
 router.post(
   "/forgot-password/verify",
+  forgotPasswordLimiter,
   validateVerifyForgotPasswordOtp,
   verifyForgotPasswordOtp,
 );
 // RESET FORGOT PASSWORD
 router.post(
   "/forgot-password/reset",
+  forgotPasswordLimiter,
   validateResetForgotPassword,
   resetForgotPassword,
 );
 // CANCEL FORGOT PASSWORD
 router.post(
   "/forgot-password/cancel",
+  forgotPasswordLimiter,
   validateCancelForgotPassword,
   cancelForgotPassword,
 );
@@ -113,24 +122,28 @@ router.delete(
 // INITIATE PHONE NUMBER CHANGE
 router.post(
   "/phone/initiate",
+  securityCodeLimiter,
   validateInitiatePhoneChange,
   initiatePhoneChange,
 );
 // INITIATE EMAIL CHANGE
 router.post(
   "/email/initiate",
+  securityCodeLimiter,
   validateInitiateEmailChange,
   initiateEmailChange,
 );
 // VERIFY CURRENT EMAIL OTP (STEP 1 OF EMAIL CHANGE)
 router.post(
   "/email/verify-current",
+  securityCodeLimiter,
   validateVerifyCode,
   verifyCurrentEmailForChange,
 );
 // INITIATE PASSWORD CHANGE
 router.post(
   "/password/initiate",
+  securityCodeLimiter,
   validateInitiatePasswordChange,
   initiatePasswordChange,
 );
@@ -139,17 +152,32 @@ router.get("/profile", getProfile);
 // DELETE AVATAR
 router.delete("/avatar", deleteAvatar);
 // UPLOAD OR REPLACE AVATAR
-router.put("/avatar", handleAvatarUpload, uploadAvatar);
+router.put("/avatar", avatarUploadLimiter, handleAvatarUpload, uploadAvatar);
 // UPDATE FULL NAME
 router.patch("/name", validateUpdateFullName, updateFullName);
 // UPDATE ADDRESS
 router.patch("/address", validateUpdateAddress, updateAddress);
 // VERIFY PHONE CHANGE OTP
-router.post("/phone/verify", validateVerifyCode, verifyPhoneChange);
+router.post(
+  "/phone/verify",
+  securityCodeLimiter,
+  validateVerifyCode,
+  verifyPhoneChange,
+);
 // VERIFY PASSWORD CHANGE OTP
-router.post("/password/verify", validateVerifyCode, verifyPasswordChange);
+router.post(
+  "/password/verify",
+  securityCodeLimiter,
+  validateVerifyCode,
+  verifyPasswordChange,
+);
 // VERIFY NEW EMAIL OTP (STEP 2 OF EMAIL CHANGE)
-router.post("/email/verify-new", validateVerifyCode, verifyNewEmailForChange);
+router.post(
+  "/email/verify-new",
+  securityCodeLimiter,
+  validateVerifyCode,
+  verifyNewEmailForChange,
+);
 // UPDATE PRICING (MILK AND YOGHURT RATES — ACCOUNT-LEVEL, AFFECTS ALL USERS)
 router.patch(
   "/pricing",

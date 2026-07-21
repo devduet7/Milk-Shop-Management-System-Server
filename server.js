@@ -24,6 +24,7 @@ import purchaseRoutes from "./routes/purchase.route.js";
 import analyticsRoutes from "./routes/analytics.route.js";
 import quickSaleRoutes from "./routes/quickSale.route.js";
 import dashboardRoutes from "./routes/dashboard.route.js";
+import { globalLimiter } from "./middleware/rateLimiter.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { initializeCronJobs } from "./services/cronJobs.js";
 import expenditureRoutes from "./routes/expenditure.route.js";
@@ -43,6 +44,8 @@ const PORT = process.env.PORT || 3000;
 app.use(cors(corsOptions));
 // TRUST PROXY MIDDLEWARE
 app.set("trust proxy", 1);
+// GLOBAL RATE LIMITER MIDDLEWARE
+app.use(globalLimiter);
 // JSON MIDDLEWARE
 app.use(express.json());
 // FORM DATA MIDDLEWARE
