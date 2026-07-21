@@ -1,5 +1,9 @@
 // <== IMPORTS ==>
 import {
+  teamInviteLimiter,
+  accountSetupLimiter,
+} from "../middleware/rateLimiter.js";
+import {
   validateListUsers,
   validateInviteUser,
   validateDeleteUser,
@@ -26,7 +30,12 @@ const router = express.Router();
 
 // <== PUBLIC ROUTE — NO AUTH REQUIRED ==>
 // COMPLETE ACCOUNT SETUP — INVITED USER SETS PASSWORD AND ACTIVATES THEIR ACCOUNT
-router.post("/setup", validateCompleteSetup, completeAccountSetup);
+router.post(
+  "/setup",
+  accountSetupLimiter,
+  validateCompleteSetup,
+  completeAccountSetup,
+);
 
 // <== APPLYING AUTHENTICATION MIDDLEWARE TO ALL ROUTES BELOW ==>
 router.use(isAuthenticated);
@@ -40,11 +49,16 @@ router.get("/", validateListUsers, listUsers);
 // DELETE A USER AND ALL THEIR SECURITY CODES
 router.delete("/:id", validateDeleteUser, deleteUser);
 // INVITE A NEW USER TO THIS ACCOUNT
-router.post("/invite", validateInviteUser, inviteUser);
+router.post("/invite", teamInviteLimiter, validateInviteUser, inviteUser);
 // ACTIVATE OR DEACTIVATE A USER'S ACCOUNT
 router.patch("/:id/status", validateUpdateStatus, updateUserStatus);
 // RESEND INVITE OTP TO A PENDING USER
-router.post("/:id/resend-invite", validateResendInvite, resendInvite);
+router.post(
+  "/:id/resend-invite",
+  teamInviteLimiter,
+  validateResendInvite,
+  resendInvite,
+);
 // UPDATE A USER-TIER USER'S MODULE PERMISSIONS
 router.patch(
   "/:id/permissions",
