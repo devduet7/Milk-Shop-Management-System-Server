@@ -22,14 +22,12 @@ export const globalLimiter = rateLimit({
 // <== LOGIN LIMITER — IP-BASED, STRICT, ONLY FAILED ATTEMPTS COUNT TOWARD THE LIMIT ==>
 export const loginLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
-  limit: 6,
+  limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: true,
   message: {
     success: false,
-    message:
-      "Too Many Failed Login Attempts. Please try again after 10 Minutes.",
+    message: "Too Many Login Attempts. Please try again after 10 Minutes.",
   },
 });
 
