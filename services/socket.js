@@ -3,6 +3,7 @@ import http from "http";
 import express from "express";
 import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
+import { Session } from "../models/session.model.js";
 import allowedOrigins from "../config/allowedOrigins.js";
 
 // <== CREATING APP INSTANCE ==>
@@ -50,40 +51,85 @@ const parseCookies = (cookieHeader) => {
   }, {});
 };
 
+/**
+ * SOCKET AUTH MIDDLEWARE
+ * VALIDATES THE ACCESS TOKEN'S SIGNATURE/CLAIMS
+ */
 // <== SOCKET AUTH MIDDLEWARE ==>
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   // PARSING COOKIES FROM THE HANDSHAKE HEADERS
   const cookies = parseCookies(socket.handshake.headers.cookie);
   // EXTRACTING THE ACCESS TOKEN COOKIE
   const accessToken = cookies.accessToken;
-  // IF NO ACCESS TOKEN IS PRESENT, REJECT THE CONNECTION
-  if (!accessToken) {
+  // EXTRACTING THE REFRESH TOKEN COOKIE — CARRIES THE SESSION ID
+  const refreshTokenCookie = cookies.refreshToken;
+  // IF EITHER COOKIE IS MISSING, THERE IS NOTHING TO AUTHENTICATE
+  if (!accessToken || !refreshTokenCookie) {
     // REJECTING THE HANDSHAKE
     return next(new Error("Unauthorized"));
   }
-  // VERIFYING THE ACCESS TOKEN
+  // DECODED ACCESS TOKEN PAYLOAD
+  let decodedAccess;
+  //  TRYING TO VERIFY THE ACCESS TOKEN
   try {
     // VERIFYING THE ACCESS TOKEN SIGNATURE
-    const decoded = jwt.verify(accessToken, process.env.AT_SECRET, {
+    decodedAccess = jwt.verify(accessToken, process.env.AT_SECRET, {
       ignoreExpiration: true,
     });
     // GUARD: PAYLOAD MISSING REQUIRED CLAIMS
-    if (!decoded.userId || !decoded.accountId || !decoded.role) {
+    if (
+      !decodedAccess.userId ||
+      !decodedAccess.accountId ||
+      !decodedAccess.role
+    ) {
       // REJECTING THE HANDSHAKE
       return next(new Error("Unauthorized"));
     }
-    // ATTACHING USER ID TO SOCKET TO USE IN CONNECTION HANDLER
-    socket.userId = decoded.userId;
-    // ATTACHING ACCOUNT ID TO SOCKET TO USE IN CONNECTION HANDLER
-    socket.accountId = decoded.accountId;
-    // ATTACHING ROLE TO SOCKET TO USE IN CONNECTION HANDLER
-    socket.role = decoded.role;
-    // ALLOWING THE CONNECTION
-    next();
   } catch {
     // SIGNATURE INVALID OR TOKEN OTHERWISE UNUSABLE
-    next(new Error("Unauthorized"));
+    return next(new Error("Unauthorized"));
   }
+  // DECODED REFRESH TOKEN PAYLOAD
+  let decodedRefresh;
+  // TRYING TO VERIFY THE REFRESH TOKEN
+  try {
+    // VERIFYING THE REFRESH TOKEN SIGNATURE
+    decodedRefresh = jwt.verify(refreshTokenCookie, process.env.RT_SECRET, {
+      ignoreExpiration: true,
+    });
+    // GUARD: NO SESSION ID EMBEDDED
+    if (!decodedRefresh.sessionId) {
+      // REJECTING THE HANDSHAKE
+      return next(new Error("Unauthorized"));
+    }
+  } catch {
+    // SIGNATURE INVALID OR TOKEN OTHERWISE UNUSABLE
+    return next(new Error("Unauthorized"));
+  }
+  // FETCHING THE SESSION THIS SOCKET CLAIMS TO BELONG TO
+  const session = await Session.findById(decodedRefresh.sessionId)
+    .select("isActive userId")
+    .lean()
+    .exec();
+  // GUARD: SESSION DELETED, ALREADY REVOKED, OR BELONGS TO A DIFFERENT USER
+  if (
+    !session ||
+    !session.isActive ||
+    session.userId.toString() !== decodedAccess.userId
+  ) {
+    // REJECTING WITH A DISTINGUISHABLE CODE
+    return next(new Error("SESSION_REVOKED"));
+  }
+  // ATTACHING USER ID TO SOCKET TO USE IN CONNECTION HANDLER
+  socket.userId = decodedAccess.userId;
+  // ATTACHING ACCOUNT ID TO SOCKET TO USE IN CONNECTION HANDLER
+  socket.accountId = decodedAccess.accountId;
+  // ATTACHING ROLE TO SOCKET TO USE IN CONNECTION HANDLER
+  socket.role = decodedAccess.role;
+  // ATTACHING SESSION ID TO SOCKET — LETS THE CLIENT LEARN ITS OWN SESSION IDENTITY
+  socket.sessionId = decodedRefresh.sessionId;
+  // ALLOWING THE CONNECTION
+  next();
 });
 
 // <== CONNECTION HANDLER ==>
@@ -95,6 +141,8 @@ io.on("connection", (socket) => {
     // JOINING THE ACCOUNT-WIDE ADMIN ROOM
     socket.join(`account:${socket.accountId}`);
   }
+  // TELLING THE CLIENT WHICH SESSION THIS CONNECTION BELONGS TO — LETS IT FILTER
+  socket.emit("session:identity", { sessionId: socket.sessionId });
 });
 
 /**
