@@ -4,9 +4,9 @@ import {
   generateAccessToken,
   generateRefreshToken,
 } from "../utils/jwtUtils.js";
-import { UAParser } from "ua-parser-js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { UAParser } from "ua-parser-js";
 import { User } from "../models/user.model.js";
 import { Account } from "../models/account.model.js";
 import expressAsyncHandler from "express-async-handler";
