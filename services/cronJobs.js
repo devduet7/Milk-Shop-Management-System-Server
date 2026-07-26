@@ -34,7 +34,6 @@ const processDailyReports = async (yesterdayStr) => {
   );
   try {
     // FINDING ALL ACCOUNTS ELIGIBLE FOR DAILY REPORT
-    // dailyReportsEnabled AND lastDailyReportSentDate NOW LIVE ON Account, NOT User
     const eligibleAccounts = await Account.find({
       dailyReportsEnabled: true,
       lastDailyReportSentDate: { $ne: yesterdayStr },
@@ -121,7 +120,6 @@ const processMonthlyReports = async (lastMonthStr) => {
   );
   try {
     // FINDING ALL ACCOUNTS ELIGIBLE FOR MONTHLY REPORT
-    // monthlyReportsEnabled AND lastMonthlyReportSentDate NOW LIVE ON Account, NOT User
     const eligibleAccounts = await Account.find({
       monthlyReportsEnabled: true,
       lastMonthlyReportSentDate: { $ne: lastMonthStr },
@@ -162,7 +160,7 @@ const processMonthlyReports = async (lastMonthStr) => {
           data,
           month: lastMonthStr,
         });
-        // UPDATING THE ACCOUNT LAST MONTHLY REPORT SENT DATE — IDEMPOTENCY GUARD ON Account
+        // UPDATING THE ACCOUNT LAST MONTHLY REPORT SENT DATE
         await Account.updateOne(
           { _id: account._id },
           { lastMonthlyReportSentDate: lastMonthStr },
@@ -207,7 +205,7 @@ export const initializeCronJobs = () => {
       const lastMonthStr = getLastMonthStr();
       // RUNNING DAILY REPORTS FIRST
       await processDailyReports(yesterdayStr);
-      // RUNNING MONTHLY REPORTS CHECK — SENDS ONLY IF LAST MONTH'S REPORT HAS NOT BEEN SENT YET
+      // RUNNING MONTHLY REPORTS CHECK
       await processMonthlyReports(lastMonthStr);
     },
     // RUNNING IN UTC TO AVOID DAYLIGHT SAVING TIME AMBIGUITY
