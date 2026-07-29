@@ -88,3 +88,10 @@ export const validateDashboardCustomers = [
   // HANDLING VALIDATION ERRORS
   handleValidationErrors,
 ];
+
+// <== VALIDATE DASHBOARD MILK LOGS QUERY ==>
+export const validateDashboardMilkLogs = [
+  ...monthAndPaginationRules,
+  // HANDLING VALIDATION ERRORS
+  handleValidationErrors,
+];
