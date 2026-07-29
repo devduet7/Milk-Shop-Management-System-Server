@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 // <== TRASH ENTITY TYPE CONSTANTS  ==>
 export const TRASH_ENTITY_TYPES = {
   SALE: "Sale",
+  MILK_LOG: "MilkLog",
   CUSTOMER: "Customer",
   PURCHASE: "Purchase",
   QUICK_SALE: "QuickSale",
