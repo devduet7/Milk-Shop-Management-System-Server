@@ -3,6 +3,7 @@ import {
   validateDashboardSales,
   validateDashboardStaff,
   validateDashboardSummary,
+  validateDashboardMilkLogs,
   validateDashboardPurchases,
   validateDashboardCustomers,
   validateDashboardQuickSales,
@@ -12,6 +13,7 @@ import {
   getDashboardSales,
   getDashboardStaff,
   getDashboardSummary,
+  getDashboardMilkLogs,
   getDashboardPurchases,
   getDashboardCustomers,
   getDashboardQuickSales,
@@ -76,6 +78,13 @@ router.get(
   requireRole("superadmin", "admin"),
   validateDashboardStaff,
   getDashboardStaff,
+);
+// GET PAGINATED MILK LOG ENTRIES FOR THE SELECTED MONTH — ADMIN-AND-ABOVE ONLY
+router.get(
+  "/milk-logs",
+  requireRole("superadmin", "admin"),
+  validateDashboardMilkLogs,
+  getDashboardMilkLogs,
 );
 
 // <== EXPORTING ROUTER ==>
