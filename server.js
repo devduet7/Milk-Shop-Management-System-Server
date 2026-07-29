@@ -16,6 +16,7 @@ import { logEvents } from "./middleware/logger.js";
 import { getDirName } from "./utils/getDirName.js";
 import { app, server } from "./services/socket.js";
 import sessionRoutes from "./routes/session.route.js";
+import milkLogRoutes from "./routes/milkLog.route.js";
 import teamUserRoutes from "./routes/teamUser.route.js";
 import settingsRoutes from "./routes/settings.route.js";
 import recoveryRoutes from "./routes/recovery.route.js";
@@ -72,6 +73,8 @@ app.use("/api/v1/trash", trashRoutes);
 app.use("/api/v1/users", teamUserRoutes);
 // SESSION MANAGEMENT ROUTE
 app.use("/api/v1/sessions", sessionRoutes);
+// MILK LOG ROUTE
+app.use("/api/v1/milk-logs", milkLogRoutes);
 // SETTINGS ROUTE
 app.use("/api/v1/settings", settingsRoutes);
 // PURCHASE ROUTE
