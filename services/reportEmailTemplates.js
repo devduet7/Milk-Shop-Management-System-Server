@@ -225,6 +225,17 @@ export const dailyReportTemplate = ({ fullName, date, data }) => {
           </table>
         </td>
       </tr>
+      <!-- MILK LOG SECTION -->
+      ${sectionHeader("Milk Log")}
+      <tr>
+        <td colspan="2">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            ${data.milkLog.count > 0 ? dataRow("Leftover Carried Over", fmtQty(data.milkLog.totalLeftover, "L"), BLUE) : ""}
+            ${data.milkLog.count > 0 ? dataRow("Used for Yoghurt", fmtQty(data.milkLog.totalYoghurt, "L"), AMBER) : ""}
+            ${data.milkLog.count === 0 ? dataRow("Milk Log", "No entries today", MUTED) : ""}
+          </table>
+        </td>
+      </tr>
     </table>
     <!-- STATUS LINE -->
     <p style="margin:20px 0 0;font-size:12px;color:${MUTED};text-align:center;font-family:Arial,sans-serif;">
@@ -321,6 +332,18 @@ export const monthlyReportTemplate = ({ fullName, month, data }) => {
             ${dataRow("Total Milk Purchased", fmtQty(data.purchases.totalMilk, "L"))}
             ${dataRow("Average Cost Per Litre", fmt(data.purchases.avgCostPerLiter))}
             ${dataRow("Total Purchase Cost (" + data.purchases.count + " records)", fmt(data.purchases.totalCost), RED)}
+          </table>
+        </td>
+      </tr>
+      <!-- MILK LOG SECTION -->
+      ${sectionHeader("Milk Log")}
+      <tr>
+        <td colspan="2">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            ${data.milkLog.count > 0 ? dataRow("Leftover Carried Over", fmtQty(data.milkLog.totalLeftover, "L"), BLUE) : ""}
+            ${data.milkLog.count > 0 ? dataRow("Used for Yoghurt", fmtQty(data.milkLog.totalYoghurt, "L"), AMBER) : ""}
+            ${data.milkLog.count > 0 ? dataRow("Yoghurt Share of Logged Volume", `${data.milkLog.yoghurtSharePercent}%`) : ""}
+            ${data.milkLog.count === 0 ? dataRow("Milk Log", "No entries this month", MUTED) : ""}
           </table>
         </td>
       </tr>

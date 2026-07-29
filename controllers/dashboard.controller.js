@@ -2,6 +2,7 @@
 import mongoose from "mongoose";
 import { Sale } from "../models/sale.model.js";
 import { Payment } from "../models/payment.model.js";
+import { MilkLog } from "../models/milkLog.model.js";
 import { Purchase } from "../models/purchase.model.js";
 import { Customer } from "../models/customer.model.js";
 import expressAsyncHandler from "express-async-handler";
@@ -69,6 +70,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     salesOutstandingAgg,
     allTimeDeliveryBillingAgg,
     allTimePaymentsAgg,
+    milkLogAgg,
   ] = await Promise.all([
     // 1. SALES BY SALETYPE × PRODUCTTYPE FOR THE MONTH
     Sale.aggregate([
@@ -270,6 +272,27 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
       { $match: { accountId: accountObjectId } },
       { $group: { _id: null, totalPaid: { $sum: "$amount" } } },
     ]),
+    // 14. MILK LOG TOTALS FOR THE MONTH
+    MilkLog.aggregate([
+      {
+        $match: {
+          accountId: accountObjectId,
+          date: { $gte: startDate, $lte: endDate },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalLeftover: {
+            $sum: { $cond: [{ $eq: ["$type", "leftover"] }, "$quantity", 0] },
+          },
+          totalYoghurt: {
+            $sum: { $cond: [{ $eq: ["$type", "yoghurt"] }, "$quantity", 0] },
+          },
+          totalEntries: { $sum: 1 },
+        },
+      },
+    ]),
   ]);
   // INITIALIZING SALES MAP
   const salesMap = {};
@@ -343,6 +366,24 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
         ? sf(purchRaw.totalSpent / purchRaw.totalMilkQty)
         : 0,
     count: purchRaw.count || 0,
+  };
+  // COMPUTING THE MILK LOG AGGREGATE
+  const milkLogRaw = milkLogAgg[0] || {};
+  // EXTRACTING TOTAL LEFTOVER FOR SHARE CALCULATION
+  const milkLogTotalLeftover = sf(milkLogRaw.totalLeftover, 3);
+  // EXTRACTING TOTAL YOGHURT FOR SHARE CALCULATION
+  const milkLogTotalYoghurt = sf(milkLogRaw.totalYoghurt, 3);
+  // COMPUTING COMBINED LOGGED VOLUME
+  const milkLogCombinedVolume = milkLogTotalLeftover + milkLogTotalYoghurt;
+  // BUILDING MILK LOG AGGREGATE
+  const milkLog = {
+    totalLeftover: milkLogTotalLeftover,
+    totalYoghurt: milkLogTotalYoghurt,
+    totalEntries: milkLogRaw.totalEntries || 0,
+    yoghurtSharePercent:
+      milkLogCombinedVolume > 0
+        ? sf((milkLogTotalYoghurt / milkLogCombinedVolume) * 100, 1)
+        : 0,
   };
   // INITIALIZING EXPENDITURES MAP
   const expMap = {};
@@ -492,6 +533,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
       sales: { customerSales, shopSales },
       quickSales,
       purchases,
+      milkLog,
       expenditures,
       deliveries,
       staff,
@@ -929,6 +971,62 @@ export const getDashboardCustomers = expressAsyncHandler(async (req, res) => {
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
     message: "Dashboard Customers Fetched Successfully!",
+    success: true,
+    data: {
+      records,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page < Math.ceil(total / limit),
+        hasPrevPage: page > 1,
+      },
+    },
+  });
+  // RETURNING FROM FUNCTION
+  return;
+});
+
+/**
+ * GET PAGINATED MILK LOG ENTRIES FOR THE SELECTED MONTH
+ * GATED TO ADMIN-AND-ABOVE AT THE ROUTE LEVEL, CONSISTENT WITH THE MILK LOG MODULE ITSELF
+ * @param {import("express").Request} req - Request Object
+ * @param {import("express").Response} res - Response Object
+ * @returns {Promise<void>}
+ */
+// <== GET DASHBOARD MILK LOGS ==>
+export const getDashboardMilkLogs = expressAsyncHandler(async (req, res) => {
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING MONTH STRING
+  const monthStr = req.query.month || getCurrentMonthStr();
+  // GETTING DATE RANGE FOR SELECTED MONTH
+  const { startDate, endDate } = getMonthDateRange(monthStr);
+  // PARSING THE PAGE NUMBER
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  // PARSING THE LIMIT NUMBER
+  const limit = Math.min(20, Math.max(1, parseInt(req.query.limit) || 10));
+  // CALCULATING SKIP NUMBER
+  const skip = (page - 1) * limit;
+  // BUILDING MATCH QUERY SCOPED TO THIS ACCOUNT
+  const matchQuery = {
+    accountId: new mongoose.Types.ObjectId(accountId),
+    date: { $gte: startDate, $lte: endDate },
+  };
+  // RUNNING COUNT AND PAGINATED FETCH IN PARALLEL
+  const [total, records] = await Promise.all([
+    MilkLog.countDocuments(matchQuery),
+    MilkLog.find(matchQuery)
+      .sort({ date: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean()
+      .exec(),
+  ]);
+  // RETURNING SUCCESS RESPONSE
+  res.status(200).json({
+    message: "Dashboard Milk Log Entries Fetched Successfully!",
     success: true,
     data: {
       records,
