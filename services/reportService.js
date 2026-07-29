@@ -1,6 +1,7 @@
 // <== IMPORTS ==>
 import mongoose from "mongoose";
 import { Sale } from "../models/sale.model.js";
+import { MilkLog } from "../models/milkLog.model.js";
 import { Payment } from "../models/payment.model.js";
 import { Purchase } from "../models/purchase.model.js";
 import { QuickSale } from "../models/quickSale.model.js";
@@ -63,67 +64,84 @@ export const fetchDailyReportData = async (accountId, dateStr) => {
   // CONVERTING ACCOUNT ID TO OBJECTID FOR AGGREGATION QUERIES
   const accountObjectId = new mongoose.Types.ObjectId(accountId.toString());
   // RUNNING ALL FIVE AGGREGATIONS IN PARALLEL
-  const [salesAgg, quickSalesAgg, purchasesAgg, expendituresAgg, deliveryAgg] =
-    await Promise.all([
-      // 1. SALES FOR THE DATE — GROUPED BY SALE TYPE FOR CUSTOMER/SHOP SPLIT
-      Sale.aggregate([
-        { $match: { accountId: accountObjectId, date: dateStr } },
-        {
-          $group: {
-            _id: "$saleType",
-            totalAmount: { $sum: "$totalAmount" },
-            pendingAmount: { $sum: "$pendingAmount" },
-            count: { $sum: 1 },
-          },
+  const [
+    salesAgg,
+    quickSalesAgg,
+    purchasesAgg,
+    expendituresAgg,
+    deliveryAgg,
+    milkLogAgg,
+  ] = await Promise.all([
+    // 1. SALES FOR THE DATE — GROUPED BY SALE TYPE FOR CUSTOMER/SHOP SPLIT
+    Sale.aggregate([
+      { $match: { accountId: accountObjectId, date: dateStr } },
+      {
+        $group: {
+          _id: "$saleType",
+          totalAmount: { $sum: "$totalAmount" },
+          pendingAmount: { $sum: "$pendingAmount" },
+          count: { $sum: 1 },
         },
-      ]),
-      // 2. QUICK SALES FOR THE DATE — GROUPED BY TYPE FOR MILK/YOGHURT SPLIT
-      QuickSale.aggregate([
-        { $match: { accountId: accountObjectId, date: dateStr } },
-        {
-          $group: {
-            _id: "$type",
-            totalRevenue: { $sum: "$total" },
-            qty: { $sum: "$quantity" },
-            count: { $sum: 1 },
-          },
+      },
+    ]),
+    // 2. QUICK SALES FOR THE DATE — GROUPED BY TYPE FOR MILK/YOGHURT SPLIT
+    QuickSale.aggregate([
+      { $match: { accountId: accountObjectId, date: dateStr } },
+      {
+        $group: {
+          _id: "$type",
+          totalRevenue: { $sum: "$total" },
+          qty: { $sum: "$quantity" },
+          count: { $sum: 1 },
         },
-      ]),
-      // 3. PURCHASES FOR THE DATE
-      Purchase.aggregate([
-        { $match: { accountId: accountObjectId, date: dateStr } },
-        {
-          $group: {
-            _id: null,
-            totalCost: { $sum: "$totalCost" },
-            totalMilk: { $sum: "$milkQuantity" },
-            count: { $sum: 1 },
-          },
+      },
+    ]),
+    // 3. PURCHASES FOR THE DATE
+    Purchase.aggregate([
+      { $match: { accountId: accountObjectId, date: dateStr } },
+      {
+        $group: {
+          _id: null,
+          totalCost: { $sum: "$totalCost" },
+          totalMilk: { $sum: "$milkQuantity" },
+          count: { $sum: 1 },
         },
-      ]),
-      // 4. EXPENDITURES FOR THE DATE
-      Expenditure.aggregate([
-        { $match: { accountId: accountObjectId, date: dateStr } },
-        {
-          $group: {
-            _id: null,
-            totalAmount: { $sum: "$amount" },
-            count: { $sum: 1 },
-          },
+      },
+    ]),
+    // 4. EXPENDITURES FOR THE DATE
+    Expenditure.aggregate([
+      { $match: { accountId: accountObjectId, date: dateStr } },
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: "$amount" },
+          count: { $sum: 1 },
         },
-      ]),
-      // 5. DELIVERY RECORDS FOR THE DATE — GROUPED BY STATUS FOR DELIVERED/MISSED SPLIT
-      DeliveryRecord.aggregate([
-        { $match: { accountId: accountObjectId, date: dateStr } },
-        {
-          $group: {
-            _id: "$status",
-            count: { $sum: 1 },
-            totalMilk: { $sum: "$milkQuantity" },
-          },
+      },
+    ]),
+    // 5. DELIVERY RECORDS FOR THE DATE — GROUPED BY STATUS FOR DELIVERED/MISSED SPLIT
+    DeliveryRecord.aggregate([
+      { $match: { accountId: accountObjectId, date: dateStr } },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+          totalMilk: { $sum: "$milkQuantity" },
         },
-      ]),
-    ]);
+      },
+    ]),
+    // 6. MILK LOG ENTRIES FOR THE DATE — GROUPED BY TYPE FOR LEFTOVER/YOGHURT SPLIT
+    MilkLog.aggregate([
+      { $match: { accountId: accountObjectId, date: dateStr } },
+      {
+        $group: {
+          _id: "$type",
+          totalQty: { $sum: "$quantity" },
+          count: { $sum: 1 },
+        },
+      },
+    ]),
+  ]);
   // INITIALIZING THE SALES MAP
   const salesMap = {};
   // PROCESSING SALES AGGREGATION RESULTS
@@ -203,6 +221,25 @@ export const fetchDailyReportData = async (accountId, dateStr) => {
   // CALCULATING DELIVERY RATE
   const deliveryRate =
     totalDeliveries > 0 ? sf((deliveredCount / totalDeliveries) * 100, 1) : 0;
+  // INITIALIZING THE MILK LOG MAP
+  const milkLogMap = {};
+  // PROCESSING MILK LOG AGGREGATION RESULTS
+  milkLogAgg.forEach(({ _id, totalQty, count }) => {
+    // ADDING MILK LOG TYPE TO MILK LOG MAP
+    milkLogMap[_id] = {
+      // QUANTITY FOR THIS TYPE
+      qty: sf(totalQty, 3),
+      // COUNT FOR THIS TYPE
+      count,
+    };
+  });
+  // CALCULATING TOTAL LEFTOVER CARRIED OVER FOR THE DATE
+  const totalLeftover = milkLogMap["leftover"]?.qty ?? 0;
+  // CALCULATING TOTAL MILK USED FOR YOGHURT FOR THE DATE
+  const totalYoghurtMilk = milkLogMap["yoghurt"]?.qty ?? 0;
+  // CALCULATING TOTAL MILK LOG ENTRIES FOR THE DATE
+  const totalMilkLogEntries =
+    (milkLogMap["leftover"]?.count ?? 0) + (milkLogMap["yoghurt"]?.count ?? 0);
   // CALCULATING THE TOTAL REVENUE
   const totalRevenue = sf(totalSalesRevenue + totalQsRevenue);
   // CALCULATING THE TOTAL EXPENSES
@@ -240,6 +277,11 @@ export const fetchDailyReportData = async (accountId, dateStr) => {
       totalMilkDelivered,
       deliveryRate,
     },
+    milkLog: {
+      totalLeftover,
+      totalYoghurt: totalYoghurtMilk,
+      count: totalMilkLogEntries,
+    },
   };
 };
 
@@ -272,6 +314,7 @@ export const fetchMonthlyReportData = async (accountId, monthStr) => {
     salesOutstandingAgg,
     allTimeDelivBillingAgg,
     allTimePaymentsAgg,
+    milkLogAgg,
   ] = await Promise.all([
     // 1. SALES BREAKDOWN BY SALETYPE AND PRODUCTTYPE
     Sale.aggregate([
@@ -457,6 +500,22 @@ export const fetchMonthlyReportData = async (accountId, monthStr) => {
       { $match: { accountId: accountObjectId } },
       { $group: { _id: null, totalPaid: { $sum: "$amount" } } },
     ]),
+    // 13. MILK LOG ENTRIES FOR THE MONTH — GROUPED BY TYPE FOR LEFTOVER/YOGHURT SPLIT
+    MilkLog.aggregate([
+      {
+        $match: {
+          accountId: accountObjectId,
+          date: { $gte: startDate, $lte: endDate },
+        },
+      },
+      {
+        $group: {
+          _id: "$type",
+          totalQty: { $sum: "$quantity" },
+          count: { $sum: 1 },
+        },
+      },
+    ]),
   ]);
   // INITIALIZING SALES BREAKDOWN MAP
   const sbMap = {};
@@ -606,6 +665,32 @@ export const fetchMonthlyReportData = async (accountId, monthStr) => {
   // CALCULATING RECOVERY RATE
   const recoveryRate =
     totalAllTimeDue > 0 ? sf((totalAllTimePaid / totalAllTimeDue) * 100, 1) : 0;
+  // INITIALIZING THE MILK LOG MAP
+  const milkLogMap = {};
+  // LOOP THROUGH MILK LOG AGGREGATION AND POPULATE MAP
+  milkLogAgg.forEach(({ _id, totalQty, count }) => {
+    // POPULATE MILK LOG MAP
+    milkLogMap[_id] = {
+      // QUANTITY FOR THIS TYPE
+      qty: sf(totalQty, 3),
+      // COUNT FOR THIS TYPE
+      count,
+    };
+  });
+  // CALCULATING TOTAL LEFTOVER CARRIED OVER FOR THE MONTH
+  const totalLeftover = milkLogMap["leftover"]?.qty ?? 0;
+  // CALCULATING TOTAL MILK USED FOR YOGHURT FOR THE MONTH
+  const totalYoghurtMilk = milkLogMap["yoghurt"]?.qty ?? 0;
+  // CALCULATING COMBINED MILK LOG VOLUME FOR SHARE CALCULATION
+  const combinedMilkLogVolume = totalLeftover + totalYoghurtMilk;
+  // CALCULATING YOGHURT SHARE OF TOTAL LOGGED VOLUME
+  const yoghurtSharePercent =
+    combinedMilkLogVolume > 0
+      ? sf((totalYoghurtMilk / combinedMilkLogVolume) * 100, 1)
+      : 0;
+  // CALCULATING TOTAL MILK LOG ENTRIES FOR THE MONTH
+  const totalMilkLogEntries =
+    (milkLogMap["leftover"]?.count ?? 0) + (milkLogMap["yoghurt"]?.count ?? 0);
   // CALCULATING MONTHLY TOTAL REVENUE
   const totalRevenue = sf(totalSalesRevenue + totalQsRevenue);
   // CALCULATING MONTHLY TOTAL EXPENSES
@@ -678,6 +763,12 @@ export const fetchMonthlyReportData = async (accountId, monthStr) => {
       totalAllTimeDue,
       totalAllTimePaid,
       recoveryRate,
+    },
+    milkLog: {
+      totalLeftover,
+      totalYoghurt: totalYoghurtMilk,
+      yoghurtSharePercent,
+      count: totalMilkLogEntries,
     },
   };
 };
