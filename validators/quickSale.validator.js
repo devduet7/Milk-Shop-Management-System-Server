@@ -7,8 +7,8 @@ export const validateGetQuickSales = [
   // VALIDATING OPTIONAL FILTER TYPE
   query("filterType")
     .optional({ nullable: true, checkFalsy: true })
-    .isIn(["today", "week", "month", "date"])
-    .withMessage("Filter Type must be today, week, month, or date!"),
+    .isIn(["today", "week", "month", "date", "range"])
+    .withMessage("Filter Type must be today, week, month, date, or range!"),
   // VALIDATING OPTIONAL DATE FOR DATE FILTER
   query("date")
     .optional({ nullable: true, checkFalsy: true })
@@ -19,6 +19,16 @@ export const validateGetQuickSales = [
     .optional({ nullable: true, checkFalsy: true })
     .matches(/^\d{4}-\d{2}$/)
     .withMessage("Month must be in YYYY-MM Format!"),
+  // VALIDATING OPTIONAL RANGE START FOR THE RANGE FILTER
+  query("rangeStart")
+    .optional({ nullable: true, checkFalsy: true })
+    .matches(/^\d{4}-\d{2}-\d{2}$/)
+    .withMessage("Range Start must be in YYYY-MM-DD Format!"),
+  // VALIDATING OPTIONAL RANGE END FOR THE RANGE FILTER
+  query("rangeEnd")
+    .optional({ nullable: true, checkFalsy: true })
+    .matches(/^\d{4}-\d{2}-\d{2}$/)
+    .withMessage("Range End must be in YYYY-MM-DD Format!"),
   // VALIDATING OPTIONAL PRODUCT TYPE FILTER
   query("productType")
     .optional({ nullable: true, checkFalsy: true })

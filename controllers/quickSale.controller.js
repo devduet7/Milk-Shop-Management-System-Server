@@ -48,7 +48,13 @@ const getWeekStartDateStr = () => {
 };
 
 // <== HELPER: GET DATE RANGE FOR FILTER ==>
-const getDateRangeForFilter = (filterType, monthStr, specificDate) => {
+const getDateRangeForFilter = (
+  filterType,
+  monthStr,
+  specificDate,
+  rangeStart,
+  rangeEnd,
+) => {
   // GET TODAY DATE STRING
   const today = getTodayDateStr();
   // SWITCH ON FILTER TYPE
@@ -68,6 +74,17 @@ const getDateRangeForFilter = (filterType, monthStr, specificDate) => {
         startDate: specificDate || today,
         endDate: specificDate || today,
       };
+    // RANGE FILTER: EXPLICIT CUSTOM START AND END DATES
+    case "range": {
+      // RESOLVING BOTH ENDS WITH A TODAY FALLBACK, CONSISTENT WITH THE DATE FILTER'S LENIENCY
+      const resolvedStart = rangeStart || today;
+      // RESOLVING END DATE WITH FALLBACK
+      const resolvedEnd = rangeEnd || today;
+      // GUARDING AGAINST AN INVERTED RANGE BY SWAPPING RATHER THAN SILENTLY RETURNING NO RESULTS
+      return resolvedStart <= resolvedEnd
+        ? { startDate: resolvedStart, endDate: resolvedEnd }
+        : { startDate: resolvedEnd, endDate: resolvedStart };
+    }
     // DEFAULT: TODAY
     default:
       return { startDate: today, endDate: today };
@@ -91,6 +108,10 @@ export const getQuickSales = expressAsyncHandler(async (req, res) => {
   const specificDate = req.query.date || null;
   // GETTING MONTH STRING FOR MONTH FILTER — DEFAULTS TO CURRENT MONTH
   const monthStr = req.query.month || getCurrentMonthStr();
+  // GETTING RANGE START FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeStart = req.query.rangeStart || null;
+  // GETTING RANGE END FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeEnd = req.query.rangeEnd || null;
   // GETTING PRODUCT TYPE FILTER (ALL | MILK | YOGHURT) — DEFAULTS TO ALL
   const productType = req.query.productType || "all";
   // PARSING PAGE NUMBER
@@ -106,6 +127,8 @@ export const getQuickSales = expressAsyncHandler(async (req, res) => {
     filterType,
     monthStr,
     specificDate,
+    rangeStart,
+    rangeEnd,
   );
   // BUILDING BASE MATCH QUERY SCOPED TO THE WHOLE ACCOUNT
   const baseMatch = {
