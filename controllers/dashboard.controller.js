@@ -34,6 +34,70 @@ const getMonthDateRange = (monthStr) => {
   return { startDate, endDate };
 };
 
+// <== HELPER: GET TODAY DATE STRING ==>
+const getTodayDateStr = () => {
+  // GET CURRENT UTC DATE
+  const now = new Date();
+  // RETURNING FORMATTED YYYY-MM-DD STRING
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")}`;
+};
+
+// <== HELPER: GET WEEK START DATE STRING (LAST 7 DAYS INCLUDING TODAY) ==>
+const getWeekStartDateStr = () => {
+  // GET CURRENT UTC DATE
+  const now = new Date();
+  // CALCULATE DATE 6 DAYS BEFORE TODAY (7-DAY WINDOW INCLUDING TODAY)
+  const weekStart = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 6),
+  );
+  // RETURNING FORMATTED YYYY-MM-DD STRING
+  return `${weekStart.getUTCFullYear()}-${String(weekStart.getUTCMonth() + 1).padStart(2, "0")}-${String(weekStart.getUTCDate()).padStart(2, "0")}`;
+};
+
+// <== HELPER: GET DATE RANGE FOR FILTER — SHARED ACROSS SUMMARY AND ALL DAILY-GRANULARITY SUB-RESOURCES ==>
+const getDateRangeForFilter = (
+  filterType,
+  monthStr,
+  specificDate,
+  rangeStart,
+  rangeEnd,
+) => {
+  // GET TODAY DATE STRING
+  const today = getTodayDateStr();
+  // SWITCH ON FILTER TYPE
+  switch (filterType) {
+    // TODAY FILTER: SINGLE DAY RANGE
+    case "today":
+      return { startDate: today, endDate: today };
+    // WEEK FILTER: LAST 7 DAYS INCLUDING TODAY
+    case "week":
+      return { startDate: getWeekStartDateStr(), endDate: today };
+    // DATE FILTER: SPECIFIC SINGLE DAY
+    case "date":
+      return {
+        startDate: specificDate || today,
+        endDate: specificDate || today,
+      };
+    // RANGE FILTER: EXPLICIT CUSTOM START AND END DATES
+    case "range": {
+      // RESOLVING BOTH ENDS WITH A TODAY FALLBACK, CONSISTENT WITH THE DATE FILTER'S LENIENCY
+      const resolvedStart = rangeStart || today;
+      // RESOLVING END DATE WITH FALLBACK
+      const resolvedEnd = rangeEnd || today;
+      // GUARDING AGAINST AN INVERTED RANGE BY SWAPPING RATHER THAN SILENTLY RETURNING NO RESULTS
+      return resolvedStart <= resolvedEnd
+        ? { startDate: resolvedStart, endDate: resolvedEnd }
+        : { startDate: resolvedEnd, endDate: resolvedStart };
+    }
+    // MONTH FILTER: FULL CALENDAR MONTH
+    case "month":
+    // DEFAULT: FULL CALENDAR MONTH
+    default:
+      // RETURNING DATE RANGE FOR THE SPECIFIED MONTH (OR CURRENT MONTH IF NOT PROVIDED)
+      return getMonthDateRange(monthStr);
+  }
+};
+
 // <== HELPER: SAFE FLOAT — ROUNDS VALUE TO DECIMAL PLACES WITH NULL FALLBACK ==>
 const sf = (n, d = 2) => parseFloat((n ?? 0).toFixed(d));
 
@@ -49,10 +113,28 @@ const sf = (n, d = 2) => parseFloat((n ?? 0).toFixed(d));
 export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
   // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
   const accountId = req.accountId;
-  // GETTING MONTH STRING (DEFAULTS TO CURRENT MONTH)
+  // GETTING FILTER TYPE (TODAY | WEEK | MONTH | DATE | RANGE) — DEFAULTS TO MONTH
+  const filterType = req.query.filterType || "month";
+  // GETTING MONTH STRING (DEFAULTS TO CURRENT MONTH) — ALWAYS TRACKED, SINCE STAFF PAYROLL AND
+  // MONTHLY BILLING FIGURES STAY MONTH-SCOPED REGARDLESS OF WHICH FILTER PILL IS ACTIVE
   const monthStr = req.query.month || getCurrentMonthStr();
-  // GETTING DATE RANGE FOR SELECTED MONTH
-  const { startDate, endDate } = getMonthDateRange(monthStr);
+  // GETTING SPECIFIC DATE FOR THE DATE FILTER (YYYY-MM-DD)
+  const specificDate = req.query.date || null;
+  // GETTING RANGE START FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeStart = req.query.rangeStart || null;
+  // GETTING RANGE END FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeEnd = req.query.rangeEnd || null;
+  // GETTING THE ACTIVE FILTER'S DATE RANGE — DRIVES ALL DAILY-GRANULARITY AGGREGATIONS BELOW
+  const { startDate, endDate } = getDateRangeForFilter(
+    filterType,
+    monthStr,
+    specificDate,
+    rangeStart,
+    rangeEnd,
+  );
+  // GETTING THE SELECTED MONTH'S FULL RANGE
+  const { startDate: monthStartDate, endDate: monthEndDate } =
+    getMonthDateRange(monthStr);
   // CONVERTING ACCOUNT ID TO OBJECT ID FOR AGGREGATION PIPELINE USE
   const accountObjectId = new mongoose.Types.ObjectId(accountId);
   // RUNNING ALL 13 AGGREGATIONS IN PARALLEL — NO SEQUENTIAL ROUND TRIPS
@@ -157,12 +239,12 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
         },
       },
     ]),
-    // 6. MONTHLY DELIVERY BILLING DUE — JOINS DELIVERY RECORDS WITH CUSTOMERS FOR THIS BILLING MONTH
+    // 6. MONTHLY DELIVERY BILLING DUE
     DeliveryRecord.aggregate([
       {
         $match: {
           accountId: accountObjectId,
-          date: { $gte: startDate, $lte: endDate },
+          date: { $gte: monthStartDate, $lte: monthEndDate },
           status: "delivered",
         },
       },
@@ -515,9 +597,14 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     customerSales.totalAmount + shopSales.totalAmount + quickSales.totalRevenue,
   );
   // COMPUTING THE TOTAL EXPENSES
-  const totalExpenses = sf(
-    purchases.totalSpent + expenditures.totalAmount + staff.totalMonthlyOutgo,
-  );
+  const totalExpenses =
+    filterType === "month"
+      ? sf(
+          purchases.totalSpent +
+            expenditures.totalAmount +
+            staff.totalMonthlyOutgo,
+        )
+      : sf(purchases.totalSpent + expenditures.totalAmount);
   // COMPUTING THE NET POSITION
   const netPosition = sf(totalRevenue - totalExpenses);
   // COMPUTING THE GROSS PROFIT
@@ -538,7 +625,13 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
       deliveries,
       staff,
       recovery,
-      appliedFilter: { month: monthStr, startDate, endDate },
+      appliedFilter: {
+        filterType,
+        month: monthStr,
+        date: filterType === "date" ? specificDate : null,
+        startDate,
+        endDate,
+      },
     },
   });
   // RETURNING FROM FUNCTION
@@ -556,10 +649,24 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
 export const getDashboardSales = expressAsyncHandler(async (req, res) => {
   // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
   const accountId = req.accountId;
+  // GETTING FILTER TYPE (TODAY | WEEK | MONTH | DATE | RANGE) — DEFAULTS TO MONTH
+  const filterType = req.query.filterType || "month";
   // GETTING MONTH STRING
   const monthStr = req.query.month || getCurrentMonthStr();
-  // GETTING DATE RANGE FOR SELECTED MONTH
-  const { startDate, endDate } = getMonthDateRange(monthStr);
+  // GETTING SPECIFIC DATE FOR THE DATE FILTER (YYYY-MM-DD)
+  const specificDate = req.query.date || null;
+  // GETTING RANGE START FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeStart = req.query.rangeStart || null;
+  // GETTING RANGE END FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeEnd = req.query.rangeEnd || null;
+  // GETTING DATE RANGE FOR SELECTED FILTER
+  const { startDate, endDate } = getDateRangeForFilter(
+    filterType,
+    monthStr,
+    specificDate,
+    rangeStart,
+    rangeEnd,
+  );
   // GETTING SALE TYPE FILTER
   const saleType = req.query.saleType || "all";
   // PARSING THE PAGE NUMBER
@@ -616,10 +723,24 @@ export const getDashboardSales = expressAsyncHandler(async (req, res) => {
 export const getDashboardQuickSales = expressAsyncHandler(async (req, res) => {
   // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
   const accountId = req.accountId;
+  // GETTING FILTER TYPE (TODAY | WEEK | MONTH | DATE | RANGE) — DEFAULTS TO MONTH
+  const filterType = req.query.filterType || "month";
   // GETTING MONTH STRING
   const monthStr = req.query.month || getCurrentMonthStr();
+  // GETTING SPECIFIC DATE FOR THE DATE FILTER (YYYY-MM-DD)
+  const specificDate = req.query.date || null;
+  // GETTING RANGE START FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeStart = req.query.rangeStart || null;
+  // GETTING RANGE END FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeEnd = req.query.rangeEnd || null;
   // GETTING DATE RANGE
-  const { startDate, endDate } = getMonthDateRange(monthStr);
+  const { startDate, endDate } = getDateRangeForFilter(
+    filterType,
+    monthStr,
+    specificDate,
+    rangeStart,
+    rangeEnd,
+  );
   // GETTING PRODUCT TYPE FILTER
   const productType = req.query.productType || "all";
   // PARSING THE PAGE NUMBER
@@ -675,10 +796,24 @@ export const getDashboardQuickSales = expressAsyncHandler(async (req, res) => {
 export const getDashboardPurchases = expressAsyncHandler(async (req, res) => {
   // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
   const accountId = req.accountId;
+  // GETTING FILTER TYPE (TODAY | WEEK | MONTH | DATE | RANGE) — DEFAULTS TO MONTH
+  const filterType = req.query.filterType || "month";
   // GETTING MONTH STRING
   const monthStr = req.query.month || getCurrentMonthStr();
+  // GETTING SPECIFIC DATE FOR THE DATE FILTER (YYYY-MM-DD)
+  const specificDate = req.query.date || null;
+  // GETTING RANGE START FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeStart = req.query.rangeStart || null;
+  // GETTING RANGE END FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeEnd = req.query.rangeEnd || null;
   // GETTING DATE RANGE
-  const { startDate, endDate } = getMonthDateRange(monthStr);
+  const { startDate, endDate } = getDateRangeForFilter(
+    filterType,
+    monthStr,
+    specificDate,
+    rangeStart,
+    rangeEnd,
+  );
   // PARSING THE PAGE NUMBER
   const page = Math.max(1, parseInt(req.query.page) || 1);
   // PARSING THE LIMIT NUMBER
@@ -732,10 +867,24 @@ export const getDashboardExpenditures = expressAsyncHandler(
   async (req, res) => {
     // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
     const accountId = req.accountId;
+    // GETTING FILTER TYPE (TODAY | WEEK | MONTH | DATE | RANGE) — DEFAULTS TO MONTH
+    const filterType = req.query.filterType || "month";
     // GETTING MONTH STRING
     const monthStr = req.query.month || getCurrentMonthStr();
+    // GETTING SPECIFIC DATE FOR THE DATE FILTER (YYYY-MM-DD)
+    const specificDate = req.query.date || null;
+    // GETTING RANGE START FOR THE RANGE FILTER (YYYY-MM-DD)
+    const rangeStart = req.query.rangeStart || null;
+    // GETTING RANGE END FOR THE RANGE FILTER (YYYY-MM-DD)
+    const rangeEnd = req.query.rangeEnd || null;
     // GETTING DATE RANGE
-    const { startDate, endDate } = getMonthDateRange(monthStr);
+    const { startDate, endDate } = getDateRangeForFilter(
+      filterType,
+      monthStr,
+      specificDate,
+      rangeStart,
+      rangeEnd,
+    );
     // GETTING CATEGORY FILTER
     const category = req.query.category || "all";
     // PARSING THE PAGE NUMBER
@@ -999,10 +1148,24 @@ export const getDashboardCustomers = expressAsyncHandler(async (req, res) => {
 export const getDashboardMilkLogs = expressAsyncHandler(async (req, res) => {
   // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
   const accountId = req.accountId;
+  // GETTING FILTER TYPE (TODAY | WEEK | MONTH | DATE | RANGE) — DEFAULTS TO MONTH
+  const filterType = req.query.filterType || "month";
   // GETTING MONTH STRING
   const monthStr = req.query.month || getCurrentMonthStr();
-  // GETTING DATE RANGE FOR SELECTED MONTH
-  const { startDate, endDate } = getMonthDateRange(monthStr);
+  // GETTING SPECIFIC DATE FOR THE DATE FILTER (YYYY-MM-DD)
+  const specificDate = req.query.date || null;
+  // GETTING RANGE START FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeStart = req.query.rangeStart || null;
+  // GETTING RANGE END FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeEnd = req.query.rangeEnd || null;
+  // GETTING DATE RANGE FOR SELECTED FILTER
+  const { startDate, endDate } = getDateRangeForFilter(
+    filterType,
+    monthStr,
+    specificDate,
+    rangeStart,
+    rangeEnd,
+  );
   // PARSING THE PAGE NUMBER
   const page = Math.max(1, parseInt(req.query.page) || 1);
   // PARSING THE LIMIT NUMBER
