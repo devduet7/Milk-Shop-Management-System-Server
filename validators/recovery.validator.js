@@ -13,13 +13,28 @@ export const validateGetRecoveries = [
   // VALIDATING OPTIONAL FILTER QUERY PARAM
   query("filter")
     .optional({ nullable: true, checkFalsy: true })
-    .isIn(["today", "week", "month"])
-    .withMessage("Filter must be today, week, or month!"),
+    .isIn(["today", "week", "month", "date", "range"])
+    .withMessage("Filter must be today, week, month, date, or range!"),
   // VALIDATING OPTIONAL MONTH QUERY PARAM
   query("month")
     .optional({ nullable: true, checkFalsy: true })
     .matches(/^\d{4}-\d{2}$/)
     .withMessage("Month must be in YYYY-MM Format!"),
+  // VALIDATING OPTIONAL DATE QUERY PARAM (USED WHEN FILTER IS DATE)
+  query("date")
+    .optional({ nullable: true, checkFalsy: true })
+    .matches(/^\d{4}-\d{2}-\d{2}$/)
+    .withMessage("Date must be in YYYY-MM-DD Format!"),
+  // VALIDATING OPTIONAL RANGE START QUERY PARAM (USED WHEN FILTER IS RANGE)
+  query("rangeStart")
+    .optional({ nullable: true, checkFalsy: true })
+    .matches(/^\d{4}-\d{2}-\d{2}$/)
+    .withMessage("Range Start must be in YYYY-MM-DD Format!"),
+  // VALIDATING OPTIONAL RANGE END QUERY PARAM (USED WHEN FILTER IS RANGE)
+  query("rangeEnd")
+    .optional({ nullable: true, checkFalsy: true })
+    .matches(/^\d{4}-\d{2}-\d{2}$/)
+    .withMessage("Range End must be in YYYY-MM-DD Format!"),
   // VALIDATING OPTIONAL STATUS FILTER
   query("status")
     .optional({ nullable: true, checkFalsy: true })
