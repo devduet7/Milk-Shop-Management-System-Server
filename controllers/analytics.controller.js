@@ -2,6 +2,7 @@
 import mongoose from "mongoose";
 import { Sale } from "../models/sale.model.js";
 import { Payment } from "../models/payment.model.js";
+import { MilkLog } from "../models/milkLog.model.js";
 import { Purchase } from "../models/purchase.model.js";
 import expressAsyncHandler from "express-async-handler";
 import { QuickSale } from "../models/quickSale.model.js";
@@ -69,6 +70,27 @@ const CATEGORY_LABELS = {
 // <== ALL EXPENDITURE CATEGORIES — ENSURES ALL CATEGORIES PRESENT EVEN WITH ZERO AMOUNTS ==>
 const ALL_CATEGORIES = ["supplies", "meals", "transport", "misc"];
 
+// <== HELPER: BUILD THE DAILY MILK LOG AGGREGATION PIPELINE ==>
+const buildDailyMilkLogPipeline = (accountObjectId, startDate, endDate) => [
+  {
+    $match: {
+      accountId: accountObjectId,
+      date: { $gte: startDate, $lte: endDate },
+    },
+  },
+  {
+    $group: {
+      _id: "$date",
+      totalLeftover: {
+        $sum: { $cond: [{ $eq: ["$type", "leftover"] }, "$quantity", 0] },
+      },
+      totalYoghurt: {
+        $sum: { $cond: [{ $eq: ["$type", "yoghurt"] }, "$quantity", 0] },
+      },
+    },
+  },
+];
+
 /**
  * GET COMPREHENSIVE ANALYTICS DATA FOR THE SELECTED MONTH
  * ALL 13 AGGREGATIONS RUN IN PARALLEL VIA PROMISE.ALL
@@ -104,6 +126,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     salesOutstandingAgg,
     allTimeDelivBillingAgg,
     allTimePaymentsAgg,
+    dailyMilkLogAgg,
   ] = await Promise.all([
     // 1. DAILY SALES REVENUE — GROUP BY DATE, SUM TOTAL AMOUNT ACROSS ALL SALE TYPES
     Sale.aggregate([
@@ -279,6 +302,10 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
       { $match: { accountId: accountObjectId } },
       { $group: { _id: null, totalPaid: { $sum: "$amount" } } },
     ]),
+    // 14. DAILY MILK LOG — GROUP BY DATE, SUM LEFTOVER AND YOGHURT QUANTITIES SEPARATELY
+    MilkLog.aggregate(
+      buildDailyMilkLogPipeline(accountObjectId, startDate, endDate),
+    ),
   ]);
   // SALES DAILY MAP
   const salesDailyMap = {};
@@ -349,6 +376,16 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     // IF DAILY MAP DOES NOT EXIST, CREATE IT
     delivDailyMap[_id] = { delivered, missed, milkQty: sf(milkQty, 3) };
   });
+  // MILK LOG DAILY MAP
+  const milkLogDailyMap = {};
+  // LOOP THROUGH MILK LOG AGGREGATION AND POPULATE DAILY MAP
+  dailyMilkLogAgg.forEach(({ _id, totalLeftover, totalYoghurt }) => {
+    // IF DAILY MAP DOES NOT EXIST, CREATE IT
+    milkLogDailyMap[_id] = {
+      totalLeftover: sf(totalLeftover, 3),
+      totalYoghurt: sf(totalYoghurt, 3),
+    };
+  });
   // DAILY FINANCIALS — COMBINED REVENUE AND EXPENSES PER DAY
   const dailyFinancials = allDays.map((date) => ({
     // DAY OF MONTH
@@ -389,6 +426,13 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     day: date.split("-")[2],
     // DATE OF DELIVERY
     ...(delivDailyMap[date] || { delivered: 0, missed: 0, milkQty: 0 }),
+  }));
+  // DAILY MILK LOG — LEFTOVER AND YOGHURT QUANTITIES PER DAY
+  const dailyMilkLog = allDays.map((date) => ({
+    // DAY OF MONTH
+    day: date.split("-")[2],
+    // DATE OF MILK LOG ENTRY
+    ...(milkLogDailyMap[date] || { totalLeftover: 0, totalYoghurt: 0 }),
   }));
   // SALES BREAKDOWN MAP
   const sbMap = {};
@@ -560,6 +604,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
       dailyQuickSales,
       dailyPurchases,
       dailyDeliveries,
+      dailyMilkLog,
       salesBreakdown,
       quickSalesBreakdown,
       expendituresByCategory,
