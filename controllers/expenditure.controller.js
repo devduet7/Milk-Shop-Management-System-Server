@@ -48,7 +48,13 @@ const getWeekStartDateStr = () => {
 };
 
 // <== HELPER: GET DATE RANGE FOR FILTER ==>
-const getDateRangeForFilter = (filter, monthStr) => {
+const getDateRangeForFilter = (
+  filter,
+  monthStr,
+  specificDate,
+  rangeStart,
+  rangeEnd,
+) => {
   // GET TODAY DATE STRING
   const today = getTodayDateStr();
   // SWITCH ON FILTER TYPE
@@ -59,10 +65,28 @@ const getDateRangeForFilter = (filter, monthStr) => {
     // WEEK FILTER: LAST 7 DAYS INCLUDING TODAY
     case "week":
       return { startDate: getWeekStartDateStr(), endDate: today };
+    // DATE FILTER: SPECIFIC SINGLE DAY
+    case "date":
+      return {
+        startDate: specificDate || today,
+        endDate: specificDate || today,
+      };
+    // RANGE FILTER: EXPLICIT CUSTOM START AND END DATES
+    case "range": {
+      // RESOLVING BOTH ENDS WITH A TODAY FALLBACK, CONSISTENT WITH THE DATE FILTER'S LENIENCY
+      const resolvedStart = rangeStart || today;
+      // RESOLVING END DATE WITH FALLBACK
+      const resolvedEnd = rangeEnd || today;
+      // GUARDING AGAINST AN INVERTED RANGE BY SWAPPING RATHER THAN SILENTLY RETURNING NO RESULTS
+      return resolvedStart <= resolvedEnd
+        ? { startDate: resolvedStart, endDate: resolvedEnd }
+        : { startDate: resolvedEnd, endDate: resolvedStart };
+    }
     // MONTH FILTER: FULL CALENDAR MONTH (USES monthStr PARAM)
     case "month":
     // DEFAULT: FULL CALENDAR MONTH
     default:
+      // GUARDING AGAINST INVALID MONTH STRING FORMAT (YYYY-MM) AND FALLING BACK TO CURRENT MONTH
       return getMonthDateRange(monthStr);
   }
 };
@@ -120,10 +144,16 @@ const buildStats = (facetResult) => {
 export const getExpenditures = expressAsyncHandler(async (req, res) => {
   // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
   const accountId = req.accountId;
-  // GETTING FILTER TYPE FROM QUERY (TODAY | WEEK | MONTH) — DEFAULTS TO MONTH
+  // GETTING FILTER TYPE FROM QUERY (TODAY | WEEK | MONTH | DATE | RANGE) — DEFAULTS TO MONTH
   const filter = req.query.filter || "month";
   // GETTING MONTH STRING FOR MONTH FILTER (DEFAULTS TO CURRENT MONTH)
   const monthStr = req.query.month || getCurrentMonthStr();
+  // GETTING SPECIFIC DATE FOR THE DATE FILTER (YYYY-MM-DD)
+  const specificDate = req.query.date || null;
+  // GETTING RANGE START FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeStart = req.query.rangeStart || null;
+  // GETTING RANGE END FOR THE RANGE FILTER (YYYY-MM-DD)
+  const rangeEnd = req.query.rangeEnd || null;
   // GETTING CATEGORY FILTER FROM QUERY
   const category = req.query.category?.trim() || "";
   // GETTING SEARCH QUERY FROM REQUEST
@@ -135,7 +165,13 @@ export const getExpenditures = expressAsyncHandler(async (req, res) => {
   // CALCULATING SKIP VALUE FOR PAGINATION
   const skip = (page - 1) * limit;
   // GETTING DATE RANGE FOR SELECTED FILTER
-  const { startDate, endDate } = getDateRangeForFilter(filter, monthStr);
+  const { startDate, endDate } = getDateRangeForFilter(
+    filter,
+    monthStr,
+    specificDate,
+    rangeStart,
+    rangeEnd,
+  );
   // BUILDING BASE MATCH QUERY
   const matchQuery = buildMatchQuery(
     accountId,
@@ -212,6 +248,7 @@ export const getExpenditures = expressAsyncHandler(async (req, res) => {
       appliedFilter: {
         type: filter,
         month: filter === "month" ? monthStr : null,
+        date: filter === "date" ? specificDate : null,
         startDate,
         endDate,
       },
