@@ -215,7 +215,7 @@ export const killUserSession = expressAsyncHandler(async (req, res) => {
   const actorRole = req.role;
   // GETTING TARGET USER ID AND SESSION ID FROM REQUEST PARAMS
   const { userId, sessionId } = req.params;
-  // GUARD: USE /me/:sessionId TO MANAGE YOUR OWN SESSIONS, NOT THIS ROUTE
+  // GUARD: USE INDIVIDUAL SESSION MANAGEMENT FOR YOUR OWN ACCOUNT, NOT THIS ROUTE
   if (userId === actorId) {
     // RETURNING BAD REQUEST RESPONSE
     res.status(400).json({

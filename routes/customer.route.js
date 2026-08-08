@@ -6,6 +6,7 @@ import {
   validateMarkDelivery,
   validateUpdateCustomer,
   validateDeleteCustomer,
+  validateAddBulkPayment,
   validateGetCustomerDetail,
 } from "../validators/customer.validator.js";
 import {
@@ -15,6 +16,7 @@ import {
   markDelivery,
   updateCustomer,
   deleteCustomer,
+  addBulkPayment,
   getCustomerDetail,
 } from "../controllers/customer.controller.js";
 import express from "express";
@@ -55,6 +57,13 @@ router.post(
   requirePermission("customers", "write"),
   validateAddPayment,
   addPayment,
+);
+// ADD A LUMP-SUM PAYMENT AUTO-ALLOCATED ACROSS OUTSTANDING MONTHS, OLDEST FIRST
+router.post(
+  "/:id/payment/bulk",
+  requirePermission("customers", "write"),
+  validateAddBulkPayment,
+  addBulkPayment,
 );
 // DELETE A CUSTOMER — ADMIN AND ABOVE ONLY, NEVER DELEGABLE VIA THE PERMISSION MATRIX
 router.delete(

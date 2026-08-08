@@ -594,7 +594,10 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
   };
   // COMPUTING THE TOTAL REVENUE
   const totalRevenue = sf(
-    customerSales.totalAmount + shopSales.totalAmount + quickSales.totalRevenue,
+    customerSales.paidAmount +
+      shopSales.totalAmount +
+      quickSales.totalRevenue +
+      deliveries.monthlyBillingPaid,
   );
   // COMPUTING THE TOTAL EXPENSES
   const totalExpenses =

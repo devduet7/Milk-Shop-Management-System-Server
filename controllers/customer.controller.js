@@ -1,4 +1,9 @@
 // <== IMPORTS ==>
+import {
+  computeMonthlyStats,
+  buildMonthlyBreakdown,
+  allocatePaymentAcrossMonths,
+} from "../services/paymentAllocationService.js";
 import { Payment } from "../models/payment.model.js";
 import { Customer } from "../models/customer.model.js";
 import expressAsyncHandler from "express-async-handler";
@@ -34,46 +39,6 @@ const getMonthDateRange = (monthStr) => {
   const endDate = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
   // RETURNING DATE RANGE
   return { startDate, endDate };
-};
-
-// <== HELPER: COMPUTE MONTHLY STATS FROM PRE-FETCHED RECORDS ==>
-const computeMonthlyStats = (
-  monthStr,
-  deliveryRecords,
-  payments,
-  pricePerLiter,
-) => {
-  // FILTERING DELIVERED RECORDS ONLY
-  const deliveredRecords = deliveryRecords.filter(
-    (d) => d.status === "delivered",
-  );
-  // FILTERING MISSED RECORDS ONLY
-  const missedRecords = deliveryRecords.filter((d) => d.status === "missed");
-  // CALCULATING TOTAL MILK DELIVERED THIS MONTH
-  const totalMilkDelivered = deliveredRecords.reduce(
-    (sum, d) => sum + d.milkQuantity,
-    0,
-  );
-  // CALCULATING MONTHLY TOTAL DUE
-  const monthlyTotal = parseFloat(
-    (totalMilkDelivered * pricePerLiter).toFixed(2),
-  );
-  // CALCULATING TOTAL PAID FOR THIS BILLING MONTH
-  const totalPaid = parseFloat(
-    payments.reduce((sum, p) => sum + p.amount, 0).toFixed(2),
-  );
-  // CALCULATING PENDING AMOUNT (CANNOT BE NEGATIVE)
-  const pending = parseFloat(Math.max(0, monthlyTotal - totalPaid).toFixed(2));
-  // RETURNING COMPUTED STATS OBJECT
-  return {
-    month: monthStr,
-    deliveredDays: deliveredRecords.length,
-    missedDays: missedRecords.length,
-    totalMilkDelivered: parseFloat(totalMilkDelivered.toFixed(3)),
-    monthlyTotal,
-    totalPaid,
-    pending,
-  };
 };
 
 /**
@@ -356,29 +321,24 @@ export const getCustomerDetail = expressAsyncHandler(async (req, res) => {
   // GETTING MONTH DATE RANGE FOR SELECTED MONTH
   const { startDate, endDate } = getMonthDateRange(monthStr);
   // FETCHING ALL FOUR QUERY SETS IN PARALLEL TO MINIMIZE RESPONSE TIME
-  const [deliveryRecords, payments, allTimeDeliveries, allTimePayments] =
-    await Promise.all([
-      // DELIVERY RECORDS FOR SELECTED MONTH ONLY (FOR CALENDAR DISPLAY)
-      DeliveryRecord.find({
-        customerId: id,
-        date: { $gte: startDate, $lte: endDate },
-      })
-        .sort({ date: 1 })
-        .lean()
-        .exec(),
-      // PAYMENTS FOR SELECTED BILLING MONTH ONLY
-      Payment.find({
-        customerId: id,
-        billingMonth: monthStr,
-      })
-        .sort({ paymentDate: -1 })
-        .lean()
-        .exec(),
-      // ALL DELIVERY RECORDS ACROSS ALL TIME FOR MONTHLY BREAKDOWN
-      DeliveryRecord.find({ customerId: id }).sort({ date: 1 }).lean().exec(),
-      // ALL PAYMENTS ACROSS ALL TIME FOR MONTHLY BREAKDOWN
-      Payment.find({ customerId: id }).lean().exec(),
-    ]);
+  const [deliveryRecords, payments] = await Promise.all([
+    // DELIVERY RECORDS FOR SELECTED MONTH ONLY (FOR CALENDAR DISPLAY)
+    DeliveryRecord.find({
+      customerId: id,
+      date: { $gte: startDate, $lte: endDate },
+    })
+      .sort({ date: 1 })
+      .lean()
+      .exec(),
+    // PAYMENTS FOR SELECTED BILLING MONTH ONLY
+    Payment.find({
+      customerId: id,
+      billingMonth: monthStr,
+    })
+      .sort({ paymentDate: -1 })
+      .lean()
+      .exec(),
+  ]);
   // COMPUTING MONTHLY STATS FOR SELECTED MONTH
   const monthlyStats = computeMonthlyStats(
     monthStr,
@@ -386,64 +346,11 @@ export const getCustomerDetail = expressAsyncHandler(async (req, res) => {
     payments,
     customer.pricePerLiter,
   );
-  // GROUPING ALL-TIME DELIVERY RECORDS BY MONTH STRING
-  const deliveriesByMonth = {};
-  // LOOPING THROUGH ALL DELIVERY RECORDS TO GROUP BY MONTH
-  allTimeDeliveries.forEach((record) => {
-    // EXTRACTING MONTH STRING FROM DATE FIELD (YYYY-MM)
-    const month = record.date.substring(0, 7);
-    // INITIALIZING ARRAY IF NOT EXISTS
-    if (!deliveriesByMonth[month]) deliveriesByMonth[month] = [];
-    // PUSHING RECORD TO MONTH'S ARRAY
-    deliveriesByMonth[month].push(record);
-  });
-  // GROUPING ALL-TIME PAYMENTS BY BILLING MONTH
-  const paymentsByBillingMonth = {};
-  // LOOPING THROUGH ALL PAYMENTS TO GROUP BY BILLING MONTH
-  allTimePayments.forEach((payment) => {
-    // GETTING BILLING MONTH KEY
-    const month = payment.billingMonth;
-    // INITIALIZING ARRAY IF NOT EXISTS
-    if (!paymentsByBillingMonth[month]) paymentsByBillingMonth[month] = [];
-    // PUSHING PAYMENT TO MONTH'S ARRAY
-    paymentsByBillingMonth[month].push(payment);
-  });
-  // BUILDING COMPLETE SET OF ALL MONTHS WITH ANY DELIVERY OR PAYMENT ACTIVITY
-  const activeMonthsSet = new Set([
-    ...Object.keys(deliveriesByMonth),
-    ...Object.keys(paymentsByBillingMonth),
-  ]);
-  // SORTING ALL ACTIVE MONTHS IN ASCENDING CHRONOLOGICAL ORDER
-  const sortedActiveMonths = Array.from(activeMonthsSet).sort();
-  // BUILDING MONTHLY BREAKDOWN WITH FULL STATS AND PAYMENT STATUS FOR EACH ACTIVE MONTH
-  const monthlyBreakdown = sortedActiveMonths.map((month) => {
-    // GETTING DELIVERY RECORDS FOR THIS MONTH
-    const monthDeliveries = deliveriesByMonth[month] || [];
-    // GETTING PAYMENTS FOR THIS MONTH
-    const monthPayments = paymentsByBillingMonth[month] || [];
-    // COMPUTING MONTHLY STATS FOR THIS MONTH
-    const stats = computeMonthlyStats(
-      month,
-      monthDeliveries,
-      monthPayments,
-      customer.pricePerLiter,
-    );
-    // DETERMINING PAYMENT STATUS FOR THIS MONTH
-    let paymentStatus;
-    // IF PENDING IS ZERO THE BILL IS FULLY CLEARED FOR THIS MONTH
-    if (stats.pending === 0) {
-      // SETTING STATUS TO CLEARED
-      paymentStatus = "cleared";
-    } else if (stats.totalPaid > 0) {
-      // PARTIAL PAYMENT HAS BEEN MADE TOWARDS THIS MONTH
-      paymentStatus = "partial";
-    } else {
-      // NO PAYMENT HAS BEEN MADE FOR THIS MONTH YET
-      paymentStatus = "unpaid";
-    }
-    // RETURNING FULL BREAKDOWN ENTRY FOR THIS MONTH WITH PAYMENT STATUS
-    return { ...stats, paymentStatus };
-  });
+  // BUILDING THE FULL MONTHLY BREAKDOWN FOR THIS CUSTOMER ACROSS ALL ACTIVE MONTHS
+  const monthlyBreakdown = await buildMonthlyBreakdown(
+    id,
+    customer.pricePerLiter,
+  );
   // COMPUTING ALL-TIME OUTSTANDING BALANCE BY SUMMING PENDING ACROSS ALL MONTHS
   const allTimeOutstanding = parseFloat(
     monthlyBreakdown.reduce((sum, m) => sum + m.pending, 0).toFixed(2),
@@ -696,8 +603,8 @@ export const markDelivery = expressAsyncHandler(async (req, res) => {
   const performedBy = req.id;
   // GETTING CUSTOMER ID FROM REQUEST PARAMS
   const { id } = req.params;
-  // GETTING DATE AND STATUS FROM REQUEST BODY
-  const { date, status } = req.body;
+  // GETTING DATE, STATUS, AND OPTIONAL MILK QUANTITY OVERRIDE FROM REQUEST BODY
+  const { date, status, milkQuantity: requestedMilkQuantity } = req.body;
   // FINDING CUSTOMER AND VERIFYING IT BELONGS TO THIS ACCOUNT
   const customer = await Customer.findOne({ _id: id, accountId }).lean().exec();
   // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
@@ -722,8 +629,15 @@ export const markDelivery = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
+  // PARSING THE OPTIONAL MILK QUANTITY OVERRIDE AS A FLOAT
+  const parsedMilkQuantity = parseFloat(requestedMilkQuantity);
   // DETERMINING MILK QUANTITY BASED ON STATUS
-  const milkQuantity = status === "delivered" ? customer.dailyMilk : 0;
+  const milkQuantity =
+    status === "delivered"
+      ? Number.isFinite(parsedMilkQuantity) && parsedMilkQuantity > 0
+        ? parsedMilkQuantity
+        : customer.dailyMilk
+      : 0;
   // UPSERTING DELIVERY RECORD (UPDATE IF EXISTS, INSERT IF NOT)
   const deliveryRecord = await DeliveryRecord.findOneAndUpdate(
     // FILTER: FIND EXISTING RECORD FOR THIS CUSTOMER AND DATE
@@ -902,6 +816,82 @@ export const addPayment = expressAsyncHandler(async (req, res) => {
         pending: newPending,
       },
     },
+  });
+  // RETURNING FROM FUNCTION
+  return;
+});
+
+/**
+ * ADD A LUMP-SUM PAYMENT AUTO-ALLOCATED ACROSS A CUSTOMER'S OUTSTANDING BILLING MONTHS
+ * OLDEST MONTH FIRST — EACH MONTH TOUCHED GETS ITS OWN PAYMENT DOCUMENT SO IT STAYS CORRECTLY
+ * LINKED TO THE BILL IT SETTLES, REGARDLESS OF WHEN THE LUMP PAYMENT WAS ACTUALLY MADE
+ * @param {import("express").Request} req - Request Object
+ * @param {import("express").Response} res - Response Object
+ * @returns {Promise<void>}
+ */
+// <== ADD BULK PAYMENT ==>
+export const addBulkPayment = expressAsyncHandler(async (req, res) => {
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
+  // GETTING CUSTOMER ID FROM REQUEST PARAMS
+  const { id } = req.params;
+  // GETTING PAYMENT DATA FROM REQUEST BODY
+  const { amount, paymentDate, note } = req.body;
+  // PARSING AMOUNT AS FLOAT
+  const parsedAmount = parseFloat(amount);
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Payment Amount must be a Valid Positive Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // FINDING CUSTOMER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const customer = await Customer.findOne({ _id: id, accountId }).lean().exec();
+  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
+  if (!customer) {
+    // RETURNING NOT FOUND RESPONSE
+    res.status(404).json({
+      message: "Customer Not Found!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // RESOLVING PAYMENT DATE (DEFAULT TO TODAY IF NOT PROVIDED)
+  const resolvedPaymentDate = paymentDate?.trim() || getTodayDateStr();
+  // RUNNING THE SHARED ALLOCATION LOGIC — OLDEST OUTSTANDING MONTH FIRST
+  const result = await allocatePaymentAcrossMonths({
+    accountId,
+    customerId: id,
+    performedBy,
+    amount: parsedAmount,
+    paymentDate: resolvedPaymentDate,
+    note: note?.trim() || null,
+    pricePerLiter: customer.pricePerLiter,
+  });
+  // IF ALLOCATION COULD NOT PROCEED (NO OUTSTANDING BALANCE OR AMOUNT TOO LARGE)
+  if (result.error) {
+    // RETURNING ERROR RESPONSE WITH THE SPECIFIC REASON
+    res.status(400).json({ message: result.error, success: false });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // BUILDING A HUMAN-READABLE MONTH COUNT FOR THE SUCCESS MESSAGE
+  const monthsLabel =
+    result.allocations.length === 1
+      ? "1 Month"
+      : `${result.allocations.length} Months`;
+  // RETURNING SUCCESS RESPONSE WITH THE FULL ALLOCATION BREAKDOWN
+  res.status(201).json({
+    message: `Payment of ₨${parsedAmount.toLocaleString()} Recorded — Applied Across ${monthsLabel}!`,
+    success: true,
+    data: result,
   });
   // RETURNING FROM FUNCTION
   return;
