@@ -5,6 +5,7 @@ import { Payment } from "../models/payment.model.js";
 import { Customer } from "../models/customer.model.js";
 import expressAsyncHandler from "express-async-handler";
 import { DeliveryRecord } from "../models/deliveryRecord.model.js";
+import { allocatePaymentAcrossMonths } from "../services/paymentAllocationService.js";
 
 // <== HELPER: GET CURRENT MONTH STRING ==>
 const getCurrentMonthStr = () => {
@@ -660,6 +661,77 @@ export const addDeliveryPayment = expressAsyncHandler(async (req, res) => {
         pending: newPending,
       },
     },
+  });
+  // RETURNING FROM FUNCTION
+  return;
+});
+
+/**
+ * ADD A BULK PAYMENT FOR A CUSTOMER'S OUTSTANDING BALANCE (DELIVERY RECOVERY)
+ * @param {import("express").Request} req - Request Object
+ * @param {import("express").Response} res - Response Object
+ * @returns {Promise<void>}
+ */
+// <== ADD BULK DELIVERY PAYMENT ==>
+export const addBulkDeliveryPayment = expressAsyncHandler(async (req, res) => {
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
+  // GETTING CUSTOMER ID FROM REQUEST PARAMS
+  const { id } = req.params;
+  // GETTING PAYMENT DATA FROM REQUEST BODY
+  const { amount, paymentDate, note } = req.body;
+  // PARSING AMOUNT AS FLOAT
+  const parsedAmount = parseFloat(amount);
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Payment Amount must be a Valid Positive Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // FINDING CUSTOMER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const customer = await Customer.findOne({ _id: id, accountId }).lean().exec();
+  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
+  if (!customer) {
+    // RETURNING NOT FOUND RESPONSE
+    res.status(404).json({ message: "Customer Not Found!", success: false });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // RESOLVING PAYMENT DATE (DEFAULT TO TODAY IF NOT PROVIDED)
+  const resolvedPaymentDate = paymentDate?.trim() || getTodayDateStr();
+  // RUNNING THE SHARED ALLOCATION LOGIC — OLDEST OUTSTANDING MONTH FIRST
+  const result = await allocatePaymentAcrossMonths({
+    accountId,
+    customerId: id,
+    performedBy,
+    amount: parsedAmount,
+    paymentDate: resolvedPaymentDate,
+    note: note?.trim() || null,
+    pricePerLiter: customer.pricePerLiter,
+  });
+  // IF ALLOCATION COULD NOT PROCEED (NO OUTSTANDING BALANCE OR AMOUNT TOO LARGE)
+  if (result.error) {
+    // RETURNING ERROR RESPONSE WITH THE SPECIFIC REASON
+    res.status(400).json({ message: result.error, success: false });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // BUILDING A HUMAN-READABLE MONTH COUNT FOR THE SUCCESS MESSAGE
+  const monthsLabel =
+    result.allocations.length === 1
+      ? "1 Month"
+      : `${result.allocations.length} Months`;
+  // RETURNING SUCCESS RESPONSE WITH THE FULL ALLOCATION BREAKDOWN
+  res.status(201).json({
+    message: `Payment of ₨${parsedAmount.toLocaleString()} Recorded — Applied Across ${monthsLabel}!`,
+    success: true,
+    data: result,
   });
   // RETURNING FROM FUNCTION
   return;
