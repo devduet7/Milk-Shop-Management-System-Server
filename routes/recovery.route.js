@@ -4,12 +4,14 @@ import {
   validateDeleteSaleRecord,
   validateUpdateSalePayment,
   validateAddDeliveryPayment,
+  validateAddBulkDeliveryPayment,
 } from "../validators/recovery.validator.js";
 import {
   getRecoveries,
   deleteSaleRecord,
   updateSalePayment,
   addDeliveryPayment,
+  addBulkDeliveryPayment,
 } from "../controllers/recovery.controller.js";
 import express from "express";
 import isAuthenticated from "../middleware/isAuthenticated.js";
@@ -49,6 +51,13 @@ router.post(
   requirePermission("recoveries", "write"),
   validateAddDeliveryPayment,
   addDeliveryPayment,
+);
+// ADD A LUMP-SUM DELIVERY PAYMENT AUTO-ALLOCATED ACROSS OUTSTANDING MONTHS, OLDEST FIRST
+router.post(
+  "/delivery/:id/bulk",
+  requirePermission("recoveries", "write"),
+  validateAddBulkDeliveryPayment,
+  addBulkDeliveryPayment,
 );
 
 // <== EXPORTING ROUTER ==>
