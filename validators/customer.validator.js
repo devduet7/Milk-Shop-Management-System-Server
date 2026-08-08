@@ -155,6 +155,40 @@ export const validateMarkDelivery = [
     .withMessage("Status is Required!")
     .isIn(["delivered", "missed", "unmarked"])
     .withMessage("Status must be delivered, missed, or unmarked!"),
+  // VALIDATING OPTIONAL MILK QUANTITY OVERRIDE — ONLY MEANINGFUL WHEN STATUS IS DELIVERED
+  body("milkQuantity")
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ min: 0.1 })
+    .withMessage("Milk Quantity must be at least 0.1 Liters!"),
+  // HANDLING VALIDATION ERRORS
+  handleValidationErrors,
+];
+
+// <== ADD BULK PAYMENT VALIDATION RULES ==>
+export const validateAddBulkPayment = [
+  // VALIDATING CUSTOMER ID PARAM
+  param("id")
+    .notEmpty()
+    .withMessage("Customer ID is Required!")
+    .isMongoId()
+    .withMessage("Invalid Customer ID!"),
+  // VALIDATING AMOUNT FIELD
+  body("amount")
+    .notEmpty()
+    .withMessage("Payment Amount is Required!")
+    .isFloat({ min: 1 })
+    .withMessage("Payment Amount must be at least ₨1!"),
+  // VALIDATING OPTIONAL PAYMENT DATE FIELD
+  body("paymentDate")
+    .optional({ nullable: true, checkFalsy: true })
+    .matches(/^\d{4}-\d{2}-\d{2}$/)
+    .withMessage("Payment Date must be in YYYY-MM-DD Format!"),
+  // VALIDATING OPTIONAL NOTE FIELD
+  body("note")
+    .optional({ nullable: true, checkFalsy: true })
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage("Note must not exceed 200 Characters!"),
   // HANDLING VALIDATION ERRORS
   handleValidationErrors,
 ];
