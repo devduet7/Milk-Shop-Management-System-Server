@@ -158,6 +158,7 @@ export const getQuickSales = expressAsyncHandler(async (req, res) => {
           yoghurtRevenue: {
             $sum: { $cond: [{ $eq: ["$type", "yoghurt"] }, "$total", 0] },
           },
+          totalDiscount: { $sum: "$discount" },
           totalTransactions: { $sum: 1 },
         },
       },
@@ -181,6 +182,7 @@ export const getQuickSales = expressAsyncHandler(async (req, res) => {
     totalYoghurtQty: parseFloat((raw.totalYoghurtQty ?? 0).toFixed(3)),
     milkRevenue: parseFloat((raw.milkRevenue ?? 0).toFixed(2)),
     yoghurtRevenue: parseFloat((raw.yoghurtRevenue ?? 0).toFixed(2)),
+    totalDiscount: parseFloat((raw.totalDiscount ?? 0).toFixed(2)),
     totalTransactions: raw.totalTransactions ?? 0,
   };
   // CALCULATING TOTAL PAGES
@@ -228,18 +230,43 @@ export const addQuickSale = expressAsyncHandler(async (req, res) => {
   // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
   const performedBy = req.id;
   // GETTING SALE DATA FROM REQUEST BODY
-  const { type, quantity, rate, date, note } = req.body;
-  // PARSING QUANTITY AS FLOAT
-  const parsedQty = parseFloat(quantity);
-  // PARSING RATE AS FLOAT
+  const { type, quantity, amount, rate, discount, date, note } = req.body;
+  // PARSING RATE AS FLOAT — REQUIRED EITHER WAY, SINCE QUANTITY-FROM-AMOUNT NEEDS IT TO DIVIDE BY
   const parsedRate = parseFloat(rate);
+  // GUARDING AGAINST A NON-FINITE OR NON-POSITIVE RATE BEFORE IT IS USED FOR ANY CALCULATION
+  if (!Number.isFinite(parsedRate) || parsedRate <= 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Rate must be a Valid Positive Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // DECLARING RESOLVED QUANTITY
+  let parsedQty;
+  // IF A MONEY AMOUNT WAS PROVIDED INSTEAD OF A QUANTITY — DERIVE QUANTITY FROM AMOUNT ÷ RATE
+  if (quantity === undefined && amount !== undefined) {
+    // PARSING THE MONEY AMOUNT AS FLOAT
+    const parsedAmount = parseFloat(amount);
+    // GUARDING AGAINST A NON-FINITE OR NON-POSITIVE AMOUNT
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      // RETURNING ERROR RESPONSE
+      res.status(400).json({
+        message: "Amount must be a Valid Positive Number!",
+        success: false,
+      });
+      // RETURNING FROM FUNCTION
+      return;
+    }
+    // DERIVING QUANTITY FROM THE MONEY AMOUNT — ROUNDED TO 3 DECIMALS, CONSISTENT WITH LITER/KG PRECISION ELSEWHERE
+    parsedQty = parseFloat((parsedAmount / parsedRate).toFixed(3));
+  } else {
+    // OTHERWISE — STANDARD QUANTITY-BASED ENTRY, UNCHANGED FROM BEFORE
+    parsedQty = parseFloat(quantity);
+  }
   // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES BEFORE MULTIPLYING
-  if (
-    !Number.isFinite(parsedQty) ||
-    !Number.isFinite(parsedRate) ||
-    parsedQty <= 0 ||
-    parsedRate <= 0
-  ) {
+  if (!Number.isFinite(parsedQty) || parsedQty <= 0) {
     // RETURNING ERROR RESPONSE
     res.status(400).json({
       message: "Quantity and Rate must be Valid Positive Numbers!",
@@ -248,8 +275,33 @@ export const addQuickSale = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // COMPUTING TOTAL — STORED DENORMALISED TO AVOID MULTIPLICATION AT QUERY TIME
-  const total = parseFloat((parsedQty * parsedRate).toFixed(2));
+  // COMPUTING SUBTOTAL — BEFORE DISCOUNT
+  const subtotal = parseFloat((parsedQty * parsedRate).toFixed(2));
+  // PARSING DISCOUNT AS FLOAT — DEFAULTS TO 0 IF NOT PROVIDED (MONEY, NEVER A PERCENTAGE)
+  const parsedDiscount = discount !== undefined ? parseFloat(discount) : 0;
+  // GUARDING AGAINST A NON-FINITE OR NEGATIVE DISCOUNT
+  if (!Number.isFinite(parsedDiscount) || parsedDiscount < 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Discount must be a Valid Non-Negative Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // GUARDING AGAINST A DISCOUNT LARGER THAN THE SUBTOTAL
+  if (parsedDiscount > subtotal) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: `Discount cannot Exceed the Subtotal of ₨${subtotal.toLocaleString()}!`,
+      success: false,
+      data: { subtotal },
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // COMPUTING TOTAL — THE NET, POST-DISCOUNT AMOUNT — STORED DENORMALISED TO AVOID RECOMPUTING AT QUERY TIME
+  const total = parseFloat((subtotal - parsedDiscount).toFixed(2));
   // RESOLVING DATE — DEFAULTS TO TODAY IF NOT PROVIDED
   const resolvedDate = date?.trim() || getTodayDateStr();
   // CREATING QUICK SALE RECORD IN DATABASE
@@ -259,6 +311,8 @@ export const addQuickSale = expressAsyncHandler(async (req, res) => {
     type,
     quantity: parsedQty,
     rate: parsedRate,
+    subtotal,
+    discount: parsedDiscount,
     total,
     date: resolvedDate,
     note: note?.trim() || null,
@@ -287,7 +341,7 @@ export const updateQuickSale = expressAsyncHandler(async (req, res) => {
   // GETTING QUICK SALE ID FROM REQUEST PARAMS
   const { id } = req.params;
   // GETTING UPDATE DATA FROM REQUEST BODY
-  const { type, quantity, rate, date, note } = req.body;
+  const { type, quantity, rate, discount, date, note } = req.body;
   // FINDING QUICK SALE AND VERIFYING IT BELONGS TO THIS ACCOUNT
   const quickSale = await QuickSale.findOne({ _id: id, accountId }).exec();
   // IF QUICK SALE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
@@ -305,6 +359,8 @@ export const updateQuickSale = expressAsyncHandler(async (req, res) => {
   if (quantity !== undefined) quickSale.quantity = parseFloat(quantity);
   // UPDATING THE RATE OF SALE IF PROVIDED
   if (rate !== undefined) quickSale.rate = parseFloat(rate);
+  // UPDATING THE DISCOUNT OF SALE IF PROVIDED (MONEY, NEVER A PERCENTAGE)
+  if (discount !== undefined) quickSale.discount = parseFloat(discount);
   // UPDATING THE DATE OF SALE IF PROVIDED
   if (date !== undefined) quickSale.date = date.trim();
   // UPDATING THE NOTE OF SALE IF PROVIDED
@@ -324,9 +380,34 @@ export const updateQuickSale = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // ALWAYS RECOMPUTE TOTAL FROM FINAL QUANTITY AND RATE — CONSISTENT WITH addQuickSale
-  quickSale.total = parseFloat(
+  // GUARDING AGAINST A NON-FINITE OR NEGATIVE DISCOUNT
+  if (!Number.isFinite(quickSale.discount) || quickSale.discount < 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Discount must be a Valid Non-Negative Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // ALWAYS RECOMPUTE SUBTOTAL FROM FINAL QUANTITY AND RATE
+  quickSale.subtotal = parseFloat(
     (quickSale.quantity * quickSale.rate).toFixed(2),
+  );
+  // GUARDING AGAINST A DISCOUNT LARGER THAN THE RECOMPUTED SUBTOTAL
+  if (quickSale.discount > quickSale.subtotal) {
+    // RETURNING ERROR RESPONSE WITH CURRENT SUBTOTAL
+    res.status(400).json({
+      message: `Discount cannot Exceed the Subtotal of ₨${quickSale.subtotal.toLocaleString()}!`,
+      success: false,
+      data: { subtotal: quickSale.subtotal },
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // ALWAYS RECOMPUTE TOTAL FROM FINAL SUBTOTAL AND DISCOUNT
+  quickSale.total = parseFloat(
+    (quickSale.subtotal - quickSale.discount).toFixed(2),
   );
   // SAVING UPDATED QUICK SALE
   await quickSale.save();
