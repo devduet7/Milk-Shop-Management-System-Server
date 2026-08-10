@@ -1,11 +1,17 @@
 // <== IMPORTS ==>
+import {
+  computeMonthlyStats,
+  allocatePaymentAcrossMonths,
+} from "../services/paymentAllocationService.js";
 import mongoose from "mongoose";
 import { Sale } from "../models/sale.model.js";
 import { Payment } from "../models/payment.model.js";
+import { Discount } from "../models/discount.model.js";
 import { Customer } from "../models/customer.model.js";
 import expressAsyncHandler from "express-async-handler";
+import { removeDocument } from "../services/trashService.js";
+import { TRASH_ENTITY_TYPES } from "../models/trash.model.js";
 import { DeliveryRecord } from "../models/deliveryRecord.model.js";
-import { allocatePaymentAcrossMonths } from "../services/paymentAllocationService.js";
 
 // <== HELPER: GET CURRENT MONTH STRING ==>
 const getCurrentMonthStr = () => {
@@ -99,60 +105,24 @@ const deriveBillingMonth = (startDate) => {
   return startDate.substring(0, 7);
 };
 
-// <== HELPER: COMPUTE MONTHLY STATS FOR A CUSTOMER ==>
-const computeMonthlyStats = (
-  monthStr,
-  deliveryRecords,
-  payments,
-  pricePerLiter,
-) => {
-  // FILTER DELIVERED RECORDS ONLY
-  const deliveredRecords = deliveryRecords.filter(
-    (d) => d.status === "delivered",
-  );
-  // FILTER MISSED RECORDS ONLY
-  const missedRecords = deliveryRecords.filter((d) => d.status === "missed");
-  // CALCULATE TOTAL MILK DELIVERED
-  const totalMilkDelivered = deliveredRecords.reduce(
-    (sum, d) => sum + d.milkQuantity,
-    0,
-  );
-  // CALCULATE MONTHLY TOTAL DUE
-  const monthlyTotal = parseFloat(
-    (totalMilkDelivered * pricePerLiter).toFixed(2),
-  );
-  // CALCULATE TOTAL PAID
-  const totalPaid = parseFloat(
-    payments.reduce((sum, p) => sum + p.amount, 0).toFixed(2),
-  );
-  // CALCULATE PENDING
-  const pending = parseFloat(Math.max(0, monthlyTotal - totalPaid).toFixed(2));
-  // RETURNING COMPUTED STATS
-  return {
-    month: monthStr,
-    deliveredDays: deliveredRecords.length,
-    missedDays: missedRecords.length,
-    totalMilkDelivered: parseFloat(totalMilkDelivered.toFixed(3)),
-    monthlyTotal,
-    totalPaid,
-    pending,
-  };
-};
-
 // <== HELPER: COMPUTE ALL-TIME OUTSTANDING STATS FOR A BATCH OF CUSTOMERS ==>
 const computeAllTimeDeliveryStats = async (customerIds, customers) => {
-  // BATCH FETCH ALL-TIME DELIVERED RECORDS AND ALL-TIME PAYMENTS IN PARALLEL
-  const [allTimeDeliveredRecords, allTimePaymentsAll] = await Promise.all([
-    DeliveryRecord.find({
-      customerId: { $in: customerIds },
-      status: "delivered",
-    })
-      .lean()
-      .exec(),
-    Payment.find({ customerId: { $in: customerIds } })
-      .lean()
-      .exec(),
-  ]);
+  // BATCH FETCH ALL-TIME DELIVERED RECORDS, ALL-TIME PAYMENTS, AND ALL-TIME DISCOUNTS IN PARALLEL
+  const [allTimeDeliveredRecords, allTimePaymentsAll, allTimeDiscountsAll] =
+    await Promise.all([
+      DeliveryRecord.find({
+        customerId: { $in: customerIds },
+        status: "delivered",
+      })
+        .lean()
+        .exec(),
+      Payment.find({ customerId: { $in: customerIds } })
+        .lean()
+        .exec(),
+      Discount.find({ customerId: { $in: customerIds } })
+        .lean()
+        .exec(),
+    ]);
   // GROUP DELIVERIES BY CUSTOMER ID
   const deliveryByCustomer = {};
   // LOOPING THROUGH ALL DELIVERY RECORDS
@@ -174,6 +144,17 @@ const computeAllTimeDeliveryStats = async (customerIds, customers) => {
     if (!paymentsByCustomer[key]) paymentsByCustomer[key] = [];
     // PUSHING PAYMENT TO CUSTOMER'S ARRAY
     paymentsByCustomer[key].push(p);
+  });
+  // GROUP DISCOUNTS BY CUSTOMER ID
+  const discountsByCustomer = {};
+  // LOOPING THROUGH ALL DISCOUNTS
+  allTimeDiscountsAll.forEach((d) => {
+    // GETTING STRING KEY FOR CUSTOMER ID
+    const key = d.customerId.toString();
+    // INITIALIZING ARRAY IF NOT EXISTS
+    if (!discountsByCustomer[key]) discountsByCustomer[key] = [];
+    // PUSHING DISCOUNT TO CUSTOMER'S ARRAY
+    discountsByCustomer[key].push(d);
   });
   // COMPUTE PER-CUSTOMER ALL-TIME OUTSTANDING
   const customerOutstandingMap = {};
@@ -199,9 +180,15 @@ const computeAllTimeDeliveryStats = async (customerIds, customers) => {
     const allTimePaid = parseFloat(
       payments.reduce((sum, p) => sum + p.amount, 0).toFixed(2),
     );
-    // CALCULATING ALL-TIME PENDING
+    // CALCULATING ALL-TIME TOTAL DISCOUNT GIVEN
+    const discounts = discountsByCustomer[custId] || [];
+    // SUMMING ALL-TIME DISCOUNT
+    const allTimeDiscount = parseFloat(
+      discounts.reduce((sum, d) => sum + d.amount, 0).toFixed(2),
+    );
+    // CALCULATING ALL-TIME PENDING — AFTER DISCOUNT
     const allTimeOutstanding = parseFloat(
-      Math.max(0, allTimeDue - allTimePaid).toFixed(2),
+      Math.max(0, allTimeDue - allTimeDiscount - allTimePaid).toFixed(2),
     );
     // POPULATING CUSTOMER OUTSTANDING MAP
     customerOutstandingMap[custId] = {
@@ -350,7 +337,11 @@ export const getRecoveries = expressAsyncHandler(async (req, res) => {
   // IF DELIVERIES TAB
   if (tab === "deliveries") {
     // BATCH FETCH DELIVERY RECORDS AND PAYMENTS FOR BILLING MONTH IN PARALLEL
-    const [billingMonthDeliveries, billingMonthPayments] = await Promise.all([
+    const [
+      billingMonthDeliveries,
+      billingMonthPayments,
+      billingMonthDiscounts,
+    ] = await Promise.all([
       DeliveryRecord.find({
         customerId: { $in: allCustomerIds },
         date: { $gte: monthStart, $lte: monthEnd },
@@ -358,6 +349,12 @@ export const getRecoveries = expressAsyncHandler(async (req, res) => {
         .lean()
         .exec(),
       Payment.find({
+        customerId: { $in: allCustomerIds },
+        billingMonth,
+      })
+        .lean()
+        .exec(),
+      Discount.find({
         customerId: { $in: allCustomerIds },
         billingMonth,
       })
@@ -402,6 +399,13 @@ export const getRecoveries = expressAsyncHandler(async (req, res) => {
       // PUSHING PAYMENT TO CUSTOMER'S ARRAY
       paymentsByCustomer[key].push(p);
     });
+    // MAP BILLING MONTH DISCOUNTS BY CUSTOMER ID — UNIQUE INDEX GUARANTEES AT MOST ONE MATCH EACH
+    const discountByCustomer = {};
+    // LOOPING THROUGH ALL DISCOUNTS
+    billingMonthDiscounts.forEach((d) => {
+      // MAPPING CUSTOMER ID TO ITS DISCOUNT AMOUNT FOR THIS BILLING MONTH
+      discountByCustomer[d.customerId.toString()] = d.amount;
+    });
     // BUILD ENRICHED CUSTOMER OBJECTS WITH MONTHLY STATS AND ALL-TIME OUTSTANDING
     const enrichedCustomers = allCustomers
       .filter((customer) => {
@@ -426,12 +430,15 @@ export const getRecoveries = expressAsyncHandler(async (req, res) => {
         const deliveries = deliveriesByCustomer[custId] || [];
         // GET PAYMENTS FOR THIS CUSTOMER
         const payments = paymentsByCustomer[custId] || [];
+        // GET DISCOUNT FOR THIS CUSTOMER'S BILLING MONTH (DEFAULTS TO 0 IF NONE SET)
+        const monthDiscount = discountByCustomer[custId] || 0;
         // COMPUTE MONTHLY STATS FOR THE BILLING MONTH
         const monthlyStats = computeMonthlyStats(
           billingMonth,
           deliveries,
           payments,
           customer.pricePerLiter,
+          monthDiscount,
         );
         // GET ALL-TIME OUTSTANDING FROM PRE-COMPUTED MAP
         const allTimeData = deliveryAllTimeStats.customerOutstandingMap[
@@ -577,8 +584,8 @@ export const addDeliveryPayment = expressAsyncHandler(async (req, res) => {
   const resolvedPaymentDate = paymentDate?.trim() || getTodayDateStr();
   // GETTING DATE RANGE FOR BILLING MONTH
   const { startDate, endDate } = getMonthDateRange(billingMonth);
-  // FETCHING DELIVERY RECORDS AND EXISTING PAYMENTS IN PARALLEL
-  const [monthDeliveries, existingPayments] = await Promise.all([
+  // FETCHING DELIVERY RECORDS, EXISTING PAYMENTS, AND THIS MONTH'S DISCOUNT IN PARALLEL
+  const [monthDeliveries, existingPayments, discountDoc] = await Promise.all([
     DeliveryRecord.find({
       customerId: id,
       date: { $gte: startDate, $lte: endDate },
@@ -587,23 +594,26 @@ export const addDeliveryPayment = expressAsyncHandler(async (req, res) => {
       .lean()
       .exec(),
     Payment.find({ customerId: id, billingMonth }).lean().exec(),
+    Discount.findOne({ customerId: id, billingMonth }).lean().exec(),
   ]);
   // CALCULATING TOTAL MILK DELIVERED FOR THIS BILLING MONTH
   const totalMilkDelivered = monthDeliveries.reduce(
     (sum, d) => sum + d.milkQuantity,
     0,
   );
-  // CALCULATING MONTHLY TOTAL DUE
+  // CALCULATING MONTHLY TOTAL DUE (GROSS — BEFORE DISCOUNT)
   const monthlyTotal = parseFloat(
     (totalMilkDelivered * customer.pricePerLiter).toFixed(2),
   );
+  // GETTING THIS MONTH'S DISCOUNT (DEFAULTS TO 0 IF NONE SET)
+  const monthDiscount = discountDoc?.amount || 0;
   // CALCULATING ALREADY PAID AMOUNT
   const alreadyPaid = parseFloat(
     existingPayments.reduce((sum, p) => sum + p.amount, 0).toFixed(2),
   );
-  // CALCULATING PENDING AMOUNT
+  // CALCULATING PENDING AMOUNT — AFTER DISCOUNT
   const pendingAmount = parseFloat(
-    Math.max(0, monthlyTotal - alreadyPaid).toFixed(2),
+    Math.max(0, monthlyTotal - monthDiscount - alreadyPaid).toFixed(2),
   );
   // BLOCKING PAYMENT IF NO OUTSTANDING BALANCE
   if (pendingAmount === 0) {
@@ -750,8 +760,8 @@ export const updateSalePayment = expressAsyncHandler(async (req, res) => {
   const accountId = req.accountId;
   // GETTING SALE ID FROM REQUEST PARAMS
   const { id } = req.params;
-  // GETTING PAID AMOUNT FROM REQUEST BODY
-  const { paidAmount } = req.body;
+  // GETTING PAID AMOUNT AND OPTIONAL DISCOUNT FROM REQUEST BODY
+  const { paidAmount, discount } = req.body;
   // FINDING SALE AND VERIFYING IT BELONGS TO THIS ACCOUNT (MUST BE CUSTOMER SALE)
   const sale = await Sale.findOne({
     _id: id,
@@ -764,6 +774,36 @@ export const updateSalePayment = expressAsyncHandler(async (req, res) => {
     res.status(404).json({ message: "Sale Not Found!", success: false });
     // RETURNING FROM FUNCTION
     return;
+  }
+  // IF A DISCOUNT UPDATE WAS PROVIDED, APPLY IT BEFORE VALIDATING PAID AMOUNT
+  if (discount !== undefined) {
+    // PARSING NEW DISCOUNT
+    const parsedDiscount = parseFloat(discount);
+    // GUARDING AGAINST A NON-FINITE OR NEGATIVE DISCOUNT
+    if (!Number.isFinite(parsedDiscount) || parsedDiscount < 0) {
+      // RETURNING ERROR RESPONSE
+      res.status(400).json({
+        message: "Discount must be a Valid Non-Negative Number!",
+        success: false,
+      });
+      // RETURNING FROM FUNCTION
+      return;
+    }
+    // GUARDING AGAINST A DISCOUNT LARGER THAN THE SUBTOTAL
+    if (parsedDiscount > sale.subtotal) {
+      // RETURNING ERROR RESPONSE
+      res.status(400).json({
+        message: `Discount cannot Exceed the Subtotal of ₨${sale.subtotal.toLocaleString()}!`,
+        success: false,
+        data: { subtotal: sale.subtotal },
+      });
+      // RETURNING FROM FUNCTION
+      return;
+    }
+    // UPDATING DISCOUNT
+    sale.discount = parsedDiscount;
+    // RECOMPUTING TOTAL AMOUNT — THE NET, BILLABLE AMOUNT AFTER DISCOUNT
+    sale.totalAmount = parseFloat((sale.subtotal - parsedDiscount).toFixed(2));
   }
   // PARSING NEW PAID AMOUNT
   const parsedPaidAmount = parseFloat(paidAmount);
@@ -807,6 +847,97 @@ export const updateSalePayment = expressAsyncHandler(async (req, res) => {
 });
 
 /**
+ * SET OR UPDATE A CUSTOMER'S MILK DELIVERY DISCOUNT FOR A GIVEN BILLING MONTH
+ * UPSERTS — ONE DISCOUNT DOCUMENT PER CUSTOMER PER BILLING MONTH
+ * @param {import("express").Request} req - Request Object
+ * @param {import("express").Response} res - Response Object
+ * @returns {Promise<void>}
+ */
+// <== SET MONTHLY DISCOUNT ==>
+export const setMonthlyDiscount = expressAsyncHandler(async (req, res) => {
+  // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
+  const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
+  // GETTING CUSTOMER ID FROM REQUEST PARAMS
+  const { id } = req.params;
+  // GETTING DISCOUNT DATA FROM REQUEST BODY
+  const { amount, billingMonth, note } = req.body;
+  // FINDING CUSTOMER AND VERIFYING IT BELONGS TO THIS ACCOUNT
+  const customer = await Customer.findOne({ _id: id, accountId }).lean().exec();
+  // IF CUSTOMER NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
+  if (!customer) {
+    // RETURNING NOT FOUND RESPONSE
+    res.status(404).json({ message: "Customer Not Found!", success: false });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // PARSING DISCOUNT AMOUNT
+  const parsedAmount = parseFloat(amount);
+  // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Discount Amount must be a Valid Positive Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // GETTING DATE RANGE FOR BILLING MONTH TO COMPUTE THE MONTHLY GROSS TOTAL
+  const { startDate, endDate } = getMonthDateRange(billingMonth);
+  // FETCHING THIS MONTH'S DELIVERED RECORDS TO VALIDATE THE DISCOUNT AGAINST THE ACTUAL BILL
+  const monthDeliveries = await DeliveryRecord.find({
+    customerId: id,
+    date: { $gte: startDate, $lte: endDate },
+    status: "delivered",
+  })
+    .lean()
+    .exec();
+  // CALCULATING TOTAL MILK DELIVERED FOR THIS BILLING MONTH
+  const totalMilkDelivered = monthDeliveries.reduce(
+    (sum, d) => sum + d.milkQuantity,
+    0,
+  );
+  // CALCULATING MONTHLY GROSS TOTAL — THE CEILING A DISCOUNT CANNOT EXCEED
+  const monthlyTotal = parseFloat(
+    (totalMilkDelivered * customer.pricePerLiter).toFixed(2),
+  );
+  // GUARDING AGAINST A DISCOUNT LARGER THAN THE MONTHLY BILL
+  if (parsedAmount > monthlyTotal) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: `Discount cannot Exceed the Monthly Bill of ₨${monthlyTotal.toLocaleString()} for ${billingMonth}!`,
+      success: false,
+      data: { monthlyTotal },
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // UPSERTING THE DISCOUNT DOCUMENT — ONE PER CUSTOMER PER BILLING MONTH
+  const discountDoc = await Discount.findOneAndUpdate(
+    { customerId: id, billingMonth },
+    {
+      customerId: id,
+      accountId,
+      performedBy,
+      amount: parsedAmount,
+      billingMonth,
+      note: note?.trim() || null,
+    },
+    { new: true, upsert: true, setDefaultsOnInsert: true },
+  ).exec();
+  // RETURNING SUCCESS RESPONSE
+  res.status(200).json({
+    message: `Discount of ₨${parsedAmount.toLocaleString()} Set for ${billingMonth}!`,
+    success: true,
+    data: { discount: discountDoc },
+  });
+  // RETURNING FROM FUNCTION
+  return;
+});
+
+/**
  * DELETE A CUSTOMER SALE RECORD (SALE RECOVERY)
  * REMOVES THE SALE ENTIRELY — REFLECTED IN SALES MODULE
  * @param {import("express").Request} req - Request Object
@@ -817,16 +948,16 @@ export const updateSalePayment = expressAsyncHandler(async (req, res) => {
 export const deleteSaleRecord = expressAsyncHandler(async (req, res) => {
   // GETTING ACCOUNT ID FROM AUTHENTICATED REQUEST
   const accountId = req.accountId;
+  // GETTING THE ACTING USER'S ID FOR ATTRIBUTION
+  const performedBy = req.id;
   // GETTING SALE ID FROM REQUEST PARAMS
   const { id } = req.params;
-  // FINDING AND DELETING IN A SINGLE ATOMIC ROUND TRIP
-  const sale = await Sale.findOneAndDelete({
+  // FINDING SALE AND VERIFYING IT BELONGS TO THIS ACCOUNT (MUST BE CUSTOMER SALE)
+  const sale = await Sale.findOne({
     _id: id,
     accountId,
     saleType: "customer",
-  })
-    .lean()
-    .exec();
+  }).exec();
   // IF SALE NOT FOUND OR DOES NOT BELONG TO THIS ACCOUNT
   if (!sale) {
     // RETURNING NOT FOUND RESPONSE
@@ -834,9 +965,18 @@ export const deleteSaleRecord = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
+  // REMOVING SALE
+  const { trashed } = await removeDocument({
+    accountId,
+    entityType: TRASH_ENTITY_TYPES.SALE,
+    document: sale,
+    performedBy,
+  });
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
-    message: "Sale Record Deleted Successfully!",
+    message: trashed
+      ? "Sale Record Moved to Trash!"
+      : "Sale Record Deleted Successfully!",
     success: true,
   });
   // RETURNING FROM FUNCTION

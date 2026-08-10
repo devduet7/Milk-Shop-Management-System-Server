@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { Sale } from "../models/sale.model.js";
 import { Payment } from "../models/payment.model.js";
 import { MilkLog } from "../models/milkLog.model.js";
+import { Discount } from "../models/discount.model.js";
 import { Purchase } from "../models/purchase.model.js";
 import expressAsyncHandler from "express-async-handler";
 import { QuickSale } from "../models/quickSale.model.js";
@@ -127,6 +128,9 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     allTimeDelivBillingAgg,
     allTimePaymentsAgg,
     dailyMilkLogAgg,
+    monthDeliveryPaymentsAgg,
+    monthDeliveryDiscountAgg,
+    dailyDeliveryPaymentsAgg,
   ] = await Promise.all([
     // 1. DAILY SALES REVENUE — GROUP BY DATE, SUM TOTAL AMOUNT ACROSS ALL SALE TYPES
     Sale.aggregate([
@@ -217,6 +221,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
         $group: {
           _id: { saleType: "$saleType", productType: "$productType" },
           total: { $sum: "$totalAmount" },
+          discount: { $sum: "$discount" },
           qty: { $sum: "$quantity" },
           count: { $sum: 1 },
         },
@@ -234,6 +239,7 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
         $group: {
           _id: "$type",
           total: { $sum: "$total" },
+          discount: { $sum: "$discount" },
           qty: { $sum: "$quantity" },
           count: { $sum: 1 },
         },
@@ -287,17 +293,40 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
         $unwind: { path: "$cd", preserveNullAndEmptyArrays: true },
       },
       {
+        // LOOKING UP EVERY DISCOUNT EVER GIVEN TO THIS CUSTOMER, ACROSS ALL BILLING MONTHS
+        $lookup: {
+          from: "discounts",
+          localField: "_id",
+          foreignField: "customerId",
+          as: "discountsArr",
+        },
+      },
+      {
+        // SUMMING THIS CUSTOMER'S ALL-TIME DISCOUNT INTO A SINGLE FIELD
+        $addFields: {
+          customerDiscountTotal: { $sum: "$discountsArr.amount" },
+        },
+      },
+      {
         $group: {
           _id: null,
           allTimeDue: {
             $sum: {
-              $multiply: ["$totalMilk", { $ifNull: ["$cd.pricePerLiter", 0] }],
+              $subtract: [
+                {
+                  $multiply: [
+                    "$totalMilk",
+                    { $ifNull: ["$cd.pricePerLiter", 0] },
+                  ],
+                },
+                "$customerDiscountTotal",
+              ],
             },
           },
         },
       },
     ]),
-    // 13. ALL-TIME DELIVERY PAYMENTS RECEIVED
+    // 13. ALL-TIME DELIVERY PAYMENTS RECEIVED (FOR THE RECOVERY SECTION — NOT MONTH-SCOPED)
     Payment.aggregate([
       { $match: { accountId: accountObjectId } },
       { $group: { _id: null, totalPaid: { $sum: "$amount" } } },
@@ -306,6 +335,31 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     MilkLog.aggregate(
       buildDailyMilkLogPipeline(accountObjectId, startDate, endDate),
     ),
+    // 15. DELIVERY PAYMENTS RECEIVED THIS SELECTED MONTH ONLY
+    Payment.aggregate([
+      {
+        $match: {
+          accountId: accountObjectId,
+          paymentDate: { $gte: startDate, $lte: endDate },
+        },
+      },
+      { $group: { _id: null, totalPaid: { $sum: "$amount" } } },
+    ]),
+    // 16. DELIVERY DISCOUNT GIVEN THIS SELECTED MONTH ONLY
+    Discount.aggregate([
+      { $match: { accountId: accountObjectId, billingMonth: monthStr } },
+      { $group: { _id: null, totalDiscount: { $sum: "$amount" } } },
+    ]),
+    // 17. DAILY DELIVERY PAYMENTS
+    Payment.aggregate([
+      {
+        $match: {
+          accountId: accountObjectId,
+          paymentDate: { $gte: startDate, $lte: endDate },
+        },
+      },
+      { $group: { _id: "$paymentDate", totalPaid: { $sum: "$amount" } } },
+    ]),
   ]);
   // SALES DAILY MAP
   const salesDailyMap = {};
@@ -376,6 +430,13 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     // IF DAILY MAP DOES NOT EXIST, CREATE IT
     delivDailyMap[_id] = { delivered, missed, milkQty: sf(milkQty, 3) };
   });
+  // DELIVERY PAYMENTS DAILY MAP
+  const delivPaymentsDailyMap = {};
+  // LOOP THROUGH DAILY DELIVERY PAYMENTS AND POPULATE DAILY MAP
+  dailyDeliveryPaymentsAgg.forEach(({ _id, totalPaid }) => {
+    // IF DAILY MAP DOES NOT EXIST, CREATE IT
+    delivPaymentsDailyMap[_id] = totalPaid;
+  });
   // MILK LOG DAILY MAP
   const milkLogDailyMap = {};
   // LOOP THROUGH MILK LOG AGGREGATION AND POPULATE DAILY MAP
@@ -391,7 +452,11 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
     // DAY OF MONTH
     day: date.split("-")[2],
     // COMBINED REVENUE
-    revenue: sf((salesDailyMap[date] || 0) + (qsDailyTotalMap[date] || 0)),
+    revenue: sf(
+      (salesDailyMap[date] || 0) +
+        (qsDailyTotalMap[date] || 0) +
+        (delivPaymentsDailyMap[date] || 0),
+    ),
     // COMBINED PURCHASES
     purchases: sf(purchaseDailyMap[date]?.cost || 0),
     // COMBINED EXPENDITURES
@@ -437,11 +502,13 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
   // SALES BREAKDOWN MAP
   const sbMap = {};
   // LOOP THROUGH SALES BREAKDOWN AND POPULATE MAP
-  salesBreakdownAgg.forEach(({ _id, total, qty, count }) => {
+  salesBreakdownAgg.forEach(({ _id, total, discount, qty, count }) => {
     // POPULATE SALES BREAKDOWN MAP
     sbMap[`${_id.saleType}_${_id.productType}`] = {
       // SALES BREAKDOWN
       total: sf(total),
+      // DISCOUNT
+      discount: sf(discount),
       // QUANTITY
       qty: sf(qty, 3),
       // COUNT
@@ -451,31 +518,52 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
   // SALES BREAKDOWN
   const salesBreakdown = {
     // CUSTOMER MILK
-    customerMilk: sbMap["customer_milk"] || { total: 0, qty: 0, count: 0 },
+    customerMilk: sbMap["customer_milk"] || {
+      total: 0,
+      discount: 0,
+      qty: 0,
+      count: 0,
+    },
     // CUSTOMER YOGHURT
     customerYoghurt: sbMap["customer_yoghurt"] || {
       total: 0,
+      discount: 0,
       qty: 0,
       count: 0,
     },
     // SHOP MILK
-    shopMilk: sbMap["shop_milk"] || { total: 0, qty: 0, count: 0 },
+    shopMilk: sbMap["shop_milk"] || {
+      total: 0,
+      discount: 0,
+      qty: 0,
+      count: 0,
+    },
     // SHOP YOGHURT
-    shopYoghurt: sbMap["shop_yoghurt"] || { total: 0, qty: 0, count: 0 },
+    shopYoghurt: sbMap["shop_yoghurt"] || {
+      total: 0,
+      discount: 0,
+      qty: 0,
+      count: 0,
+    },
   };
   // QUICK SALES BREAKDOWN MAP
   const qsbMap = {};
   // LOOP THROUGH QUICK SALES BREAKDOWN AND POPULATE MAP
-  qsBreakdownAgg.forEach(({ _id, total, qty, count }) => {
+  qsBreakdownAgg.forEach(({ _id, total, discount, qty, count }) => {
     // POPULATE QUICK SALES BREAKDOWN MAP
-    qsbMap[_id] = { total: sf(total), qty: sf(qty, 3), count };
+    qsbMap[_id] = {
+      total: sf(total),
+      discount: sf(discount),
+      qty: sf(qty, 3),
+      count,
+    };
   });
   // QUICK SALES BREAKDOWN
   const quickSalesBreakdown = {
     // MILK QUICK SALES
-    milk: qsbMap["milk"] || { total: 0, qty: 0, count: 0 },
+    milk: qsbMap["milk"] || { total: 0, discount: 0, qty: 0, count: 0 },
     // YOGHURT QUICK SALES
-    yoghurt: qsbMap["yoghurt"] || { total: 0, qty: 0, count: 0 },
+    yoghurt: qsbMap["yoghurt"] || { total: 0, discount: 0, qty: 0, count: 0 },
   };
   // EXPENDITURES BY CATEGORY — ALL FOUR CATEGORIES ALWAYS PRESENT
   const expCatMap = {};
@@ -541,8 +629,22 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
   const totalQuickSalesRevenue = sf(
     quickSalesBreakdown.milk.total + quickSalesBreakdown.yoghurt.total,
   );
+  // TOTAL DELIVERY REVENUE
+  const totalDeliveryRevenue = sf(monthDeliveryPaymentsAgg[0]?.totalPaid || 0);
   // TOTAL REVENUE
-  const totalRevenue = sf(totalSalesRevenue + totalQuickSalesRevenue);
+  const totalRevenue = sf(
+    totalSalesRevenue + totalQuickSalesRevenue + totalDeliveryRevenue,
+  );
+  // TOTAL DISCOUNT GIVEN THIS MONTH ACROSS SALES, QUICK SALES, AND DELIVERIES
+  const totalDiscount = sf(
+    salesBreakdown.customerMilk.discount +
+      salesBreakdown.customerYoghurt.discount +
+      salesBreakdown.shopMilk.discount +
+      salesBreakdown.shopYoghurt.discount +
+      quickSalesBreakdown.milk.discount +
+      quickSalesBreakdown.yoghurt.discount +
+      (monthDeliveryDiscountAgg[0]?.totalDiscount || 0),
+  );
   // TOTAL PURCHASE COST
   const totalPurchaseCost = sf(
     dailyPurchasesAgg.reduce((sum, d) => sum + (d.cost || 0), 0),
@@ -613,6 +715,8 @@ export const getAnalyticsData = expressAsyncHandler(async (req, res) => {
         totalRevenue,
         totalSalesRevenue,
         totalQuickSalesRevenue,
+        totalDeliveryRevenue,
+        totalDiscount,
         totalExpenses,
         totalPurchaseCost,
         totalExpenditureAmount,

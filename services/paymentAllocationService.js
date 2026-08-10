@@ -1,5 +1,6 @@
 // <== IMPORTS ==>
 import { Payment } from "../models/payment.model.js";
+import { Discount } from "../models/discount.model.js";
 import { DeliveryRecord } from "../models/deliveryRecord.model.js";
 
 /**
@@ -16,6 +17,7 @@ export const computeMonthlyStats = (
   deliveryRecords,
   payments,
   pricePerLiter,
+  discount = 0,
 ) => {
   // FILTERING DELIVERED RECORDS ONLY
   const deliveredRecords = deliveryRecords.filter(
@@ -28,7 +30,7 @@ export const computeMonthlyStats = (
     (sum, d) => sum + d.milkQuantity,
     0,
   );
-  // CALCULATING MONTHLY TOTAL DUE
+  // CALCULATING MONTHLY TOTAL DUE (GROSS — BEFORE DISCOUNT)
   const monthlyTotal = parseFloat(
     (totalMilkDelivered * pricePerLiter).toFixed(2),
   );
@@ -36,8 +38,10 @@ export const computeMonthlyStats = (
   const totalPaid = parseFloat(
     payments.reduce((sum, p) => sum + p.amount, 0).toFixed(2),
   );
-  // CALCULATING PENDING AMOUNT (CANNOT BE NEGATIVE)
-  const pending = parseFloat(Math.max(0, monthlyTotal - totalPaid).toFixed(2));
+  // CALCULATING PENDING AMOUNT — AFTER DISCOUNT
+  const pending = parseFloat(
+    Math.max(0, monthlyTotal - discount - totalPaid).toFixed(2),
+  );
   // RETURNING COMPUTED STATS OBJECT
   return {
     month: monthStr,
@@ -45,6 +49,7 @@ export const computeMonthlyStats = (
     missedDays: missedRecords.length,
     totalMilkDelivered: parseFloat(totalMilkDelivered.toFixed(3)),
     monthlyTotal,
+    discount: parseFloat(discount.toFixed(2)),
     totalPaid,
     pending,
   };
@@ -58,10 +63,11 @@ export const computeMonthlyStats = (
  */
 // <== HELPER: BUILD FULL MONTHLY BREAKDOWN FOR A CUSTOMER ==>
 export const buildMonthlyBreakdown = async (customerId, pricePerLiter) => {
-  // FETCHING ALL DELIVERY RECORDS AND PAYMENTS FOR THIS CUSTOMER IN PARALLEL
-  const [allDeliveries, allPayments] = await Promise.all([
+  // FETCHING ALL DELIVERY RECORDS, PAYMENTS, AND DISCOUNTS FOR THIS CUSTOMER IN PARALLEL
+  const [allDeliveries, allPayments, allDiscounts] = await Promise.all([
     DeliveryRecord.find({ customerId }).sort({ date: 1 }).lean().exec(),
     Payment.find({ customerId }).lean().exec(),
+    Discount.find({ customerId }).lean().exec(),
   ]);
   // GROUPING ALL-TIME DELIVERY RECORDS BY MONTH STRING
   const deliveriesByMonth = {};
@@ -85,10 +91,18 @@ export const buildMonthlyBreakdown = async (customerId, pricePerLiter) => {
     // PUSHING PAYMENT TO MONTH'S ARRAY
     paymentsByBillingMonth[month].push(payment);
   });
-  // BUILDING COMPLETE SET OF ALL MONTHS WITH ANY DELIVERY OR PAYMENT ACTIVITY
+  // MAPPING ALL-TIME DISCOUNTS BY BILLING MONTH — UNIQUE INDEX GUARANTEES AT MOST ONE PER MONTH
+  const discountByBillingMonth = {};
+  // LOOPING THROUGH ALL DISCOUNTS TO MAP BY BILLING MONTH
+  allDiscounts.forEach((discountDoc) => {
+    // MAPPING BILLING MONTH TO ITS DISCOUNT AMOUNT
+    discountByBillingMonth[discountDoc.billingMonth] = discountDoc.amount;
+  });
+  // BUILDING COMPLETE SET OF ALL MONTHS WITH ANY DELIVERY, PAYMENT, OR DISCOUNT ACTIVITY
   const activeMonthsSet = new Set([
     ...Object.keys(deliveriesByMonth),
     ...Object.keys(paymentsByBillingMonth),
+    ...Object.keys(discountByBillingMonth),
   ]);
   // SORTING ALL ACTIVE MONTHS IN ASCENDING CHRONOLOGICAL ORDER (OLDEST FIRST)
   const sortedActiveMonths = Array.from(activeMonthsSet).sort();
@@ -98,12 +112,15 @@ export const buildMonthlyBreakdown = async (customerId, pricePerLiter) => {
     const monthDeliveries = deliveriesByMonth[month] || [];
     // GETTING PAYMENTS FOR THIS MONTH
     const monthPayments = paymentsByBillingMonth[month] || [];
+    // GETTING DISCOUNT FOR THIS MONTH (DEFAULTS TO 0 IF NONE SET)
+    const monthDiscount = discountByBillingMonth[month] || 0;
     // COMPUTING MONTHLY STATS FOR THIS MONTH
     const stats = computeMonthlyStats(
       month,
       monthDeliveries,
       monthPayments,
       pricePerLiter,
+      monthDiscount,
     );
     // DETERMINING PAYMENT STATUS FOR THIS MONTH
     let paymentStatus;

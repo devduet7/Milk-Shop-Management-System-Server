@@ -56,18 +56,37 @@ export const validateAddQuickSale = [
     .withMessage("Sale Type is Required!")
     .isIn(["milk", "yoghurt"])
     .withMessage("Sale Type must be milk or yoghurt!"),
-  // VALIDATING QUANTITY FIELD
+  // VALIDATING QUANTITY FIELD (OPTIONAL — MAY BE OMITTED WHEN AMOUNT IS PROVIDED INSTEAD)
   body("quantity")
-    .notEmpty()
-    .withMessage("Quantity is Required!")
+    .optional({ nullable: true, checkFalsy: true })
     .isFloat({ min: 0.1 })
     .withMessage("Quantity must be at least 0.1!"),
+  // VALIDATING AMOUNT FIELD (OPTIONAL — MAY BE OMITTED WHEN QUANTITY IS PROVIDED INSTEAD)
+  body("amount")
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ min: 1 })
+    .withMessage("Amount must be at least ₨1!"),
+  // VALIDATING THAT AT LEAST ONE OF QUANTITY OR AMOUNT WAS PROVIDED
+  body().custom((value, { req }) => {
+    // CHECKING BOTH FIELDS ARE ABSENT
+    if (!req.body.quantity && !req.body.amount) {
+      // THROWING VALIDATION ERROR
+      throw new Error("Either Quantity or Amount is Required!");
+    }
+    // PASSING VALIDATION
+    return true;
+  }),
   // VALIDATING RATE FIELD
   body("rate")
     .notEmpty()
     .withMessage("Rate is Required!")
     .isFloat({ min: 1 })
     .withMessage("Rate must be at least ₨1!"),
+  // VALIDATING OPTIONAL DISCOUNT FIELD
+  body("discount")
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ min: 0 })
+    .withMessage("Discount must be at least ₨0!"),
   // VALIDATING OPTIONAL DATE FIELD
   body("date")
     .optional({ nullable: true, checkFalsy: true })
@@ -106,6 +125,11 @@ export const validateUpdateQuickSale = [
     .optional({ nullable: true, checkFalsy: true })
     .isFloat({ min: 1 })
     .withMessage("Rate must be at least ₨1!"),
+  // VALIDATING OPTIONAL DISCOUNT FIELD
+  body("discount")
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ min: 0 })
+    .withMessage("Discount must be at least ₨0!"),
   // VALIDATING OPTIONAL DATE FIELD
   body("date")
     .optional({ nullable: true, checkFalsy: true })

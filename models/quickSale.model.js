@@ -35,7 +35,20 @@ const quickSaleSchema = new mongoose.Schema(
       required: true,
       min: [1, "Rate must be at least ₨1!"],
     },
-    // TOTAL FIELD — DERIVED AS QUANTITY * RATE, STORED DENORMALISED TO AVOID MULTIPLICATION AT QUERY TIME
+    // SUBTOTAL FIELD — DERIVED AS QUANTITY * RATE, BEFORE DISCOUNT — STORED FOR REPORTING
+    subtotal: {
+      type: Number,
+      required: true,
+      min: [0, "Subtotal cannot be Negative!"],
+    },
+    // DISCOUNT FIELD (MONEY KNOCKED OFF THE SUBTOTAL — NEVER A PERCENTAGE)
+    discount: {
+      type: Number,
+      required: true,
+      default: 0,
+      min: [0, "Discount cannot be Negative!"],
+    },
+    // TOTAL FIELD (DERIVED: SUBTOTAL - DISCOUNT — STORED FOR REPORTING)
     total: {
       type: Number,
       required: true,
