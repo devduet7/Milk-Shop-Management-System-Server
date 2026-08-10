@@ -168,6 +168,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
           totalAmount: { $sum: "$totalAmount" },
           paidAmount: { $sum: "$paidAmount" },
           pendingAmount: { $sum: "$pendingAmount" },
+          discount: { $sum: "$discount" },
           totalQty: { $sum: "$quantity" },
           count: { $sum: 1 },
         },
@@ -185,6 +186,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
         $group: {
           _id: "$type",
           totalRevenue: { $sum: "$total" },
+          discount: { $sum: "$discount" },
           totalQty: { $sum: "$quantity" },
           count: { $sum: 1 },
         },
@@ -239,7 +241,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
         },
       },
     ]),
-    // 6. MONTHLY DELIVERY BILLING DUE
+    // 6. MONTHLY DELIVERY BILLING DUE (NET OF THIS MONTH'S PER-CUSTOMER DISCOUNT)
     DeliveryRecord.aggregate([
       {
         $match: {
@@ -261,16 +263,44 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
         $unwind: { path: "$customerData", preserveNullAndEmptyArrays: true },
       },
       {
+        $lookup: {
+          from: "discounts",
+          let: { custId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$customerId", "$$custId"] },
+                    { $eq: ["$billingMonth", monthStr] },
+                  ],
+                },
+              },
+            },
+          ],
+          as: "discountData",
+        },
+      },
+      {
+        $unwind: { path: "$discountData", preserveNullAndEmptyArrays: true },
+      },
+      {
         $group: {
           _id: null,
           monthlyBillingDue: {
             $sum: {
-              $multiply: [
-                "$totalMilk",
-                { $ifNull: ["$customerData.pricePerLiter", 0] },
+              $subtract: [
+                {
+                  $multiply: [
+                    "$totalMilk",
+                    { $ifNull: ["$customerData.pricePerLiter", 0] },
+                  ],
+                },
+                { $ifNull: ["$discountData.amount", 0] },
               ],
             },
           },
+          monthlyDiscount: { $sum: { $ifNull: ["$discountData.amount", 0] } },
         },
       },
     ]),
@@ -320,7 +350,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
         },
       },
     ]),
-    // 12. ALL-TIME DELIVERY BILLING DUE (JOINS DELIVERY RECORDS WITH CUSTOMERS)
+    // 12. ALL-TIME DELIVERY BILLING DUE (JOINS DELIVERY RECORDS WITH CUSTOMERS, NET OF ALL-TIME DISCOUNT)
     DeliveryRecord.aggregate([
       { $match: { accountId: accountObjectId, status: "delivered" } },
       { $group: { _id: "$customerId", totalMilk: { $sum: "$milkQuantity" } } },
@@ -336,13 +366,33 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
         $unwind: { path: "$customerData", preserveNullAndEmptyArrays: true },
       },
       {
+        // LOOKING UP EVERY DISCOUNT EVER GIVEN TO THIS CUSTOMER, ACROSS ALL BILLING MONTHS
+        $lookup: {
+          from: "discounts",
+          localField: "_id",
+          foreignField: "customerId",
+          as: "discountsArr",
+        },
+      },
+      {
+        // SUMMING THIS CUSTOMER'S ALL-TIME DISCOUNT INTO A SINGLE FIELD
+        $addFields: {
+          customerDiscountTotal: { $sum: "$discountsArr.amount" },
+        },
+      },
+      {
         $group: {
           _id: null,
           allTimeDue: {
             $sum: {
-              $multiply: [
-                "$totalMilk",
-                { $ifNull: ["$customerData.pricePerLiter", 0] },
+              $subtract: [
+                {
+                  $multiply: [
+                    "$totalMilk",
+                    { $ifNull: ["$customerData.pricePerLiter", 0] },
+                  ],
+                },
+                "$customerDiscountTotal",
               ],
             },
           },
@@ -380,12 +430,21 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
   const salesMap = {};
   // LOOPING THROUGH SALES AGGREGATE
   salesAgg.forEach(
-    ({ _id, totalAmount, paidAmount, pendingAmount, totalQty, count }) => {
+    ({
+      _id,
+      totalAmount,
+      paidAmount,
+      pendingAmount,
+      discount,
+      totalQty,
+      count,
+    }) => {
       // ADDING SALE TO SALES MAP
       salesMap[`${_id.saleType}_${_id.productType}`] = {
         totalAmount,
         paidAmount,
         pendingAmount,
+        discount,
         qty: totalQty,
         count,
       };
@@ -404,6 +463,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     totalAmount: sf((cm.totalAmount || 0) + (cy.totalAmount || 0)),
     paidAmount: sf((cm.paidAmount || 0) + (cy.paidAmount || 0)),
     pendingAmount: sf((cm.pendingAmount || 0) + (cy.pendingAmount || 0)),
+    discount: sf((cm.discount || 0) + (cy.discount || 0)),
     milkQty: sf(cm.qty || 0, 3),
     yoghurtQty: sf(cy.qty || 0, 3),
     count: (cm.count || 0) + (cy.count || 0),
@@ -411,6 +471,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
   // BUILDING SHOP SALES AGGREGATE
   const shopSales = {
     totalAmount: sf((sm.totalAmount || 0) + (sy.totalAmount || 0)),
+    discount: sf((sm.discount || 0) + (sy.discount || 0)),
     milkQty: sf(sm.qty || 0, 3),
     yoghurtQty: sf(sy.qty || 0, 3),
     count: (sm.count || 0) + (sy.count || 0),
@@ -418,9 +479,9 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
   // INITIALIZING QUICK SALES MAP
   const qsMap = {};
   // LOOPING THROUGH QUICK SALES AGGREGATE
-  quickSalesAgg.forEach(({ _id, totalRevenue, totalQty, count }) => {
+  quickSalesAgg.forEach(({ _id, totalRevenue, discount, totalQty, count }) => {
     // ADDING QUICK SALE TO QUICK SALES MAP
-    qsMap[_id] = { totalRevenue, qty: totalQty, count };
+    qsMap[_id] = { totalRevenue, discount, qty: totalQty, count };
   });
   // EXTRACTING THE MILK QUICK SALES FROM QUICK SALES MAP
   const qsMilk = qsMap["milk"] || {};
@@ -433,6 +494,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     ),
     milkRevenue: sf(qsMilk.totalRevenue || 0),
     yoghurtRevenue: sf(qsYoghurt.totalRevenue || 0),
+    discount: sf((qsMilk.discount || 0) + (qsYoghurt.discount || 0)),
     milkQty: sf(qsMilk.qty || 0, 3),
     yoghurtQty: sf(qsYoghurt.qty || 0, 3),
     count: (qsMilk.count || 0) + (qsYoghurt.count || 0),
@@ -509,6 +571,8 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
   const missedStats = delivStatusMap["missed"] || { count: 0, totalMilk: 0 };
   // COMPUTING THE MONTHLY BILLING DUE
   const monthlyBillingDue = sf(deliveryBillingAgg[0]?.monthlyBillingDue || 0);
+  // COMPUTING THE MONTHLY DISCOUNT GIVEN
+  const monthlyDiscount = sf(deliveryBillingAgg[0]?.monthlyDiscount || 0);
   // COMPUTING THE MONTHLY BILLING PAID
   const monthlyBillingPaid = sf(monthPaymentsAgg[0]?.totalPaid || 0);
   // COMPUTING THE MONTHLY BILLING PENDING
@@ -529,6 +593,7 @@ export const getDashboardSummary = expressAsyncHandler(async (req, res) => {
     missedDays: missedStats.count,
     totalMilkDelivered: sf(deliveredStats.totalMilk, 3),
     monthlyBillingDue,
+    monthlyDiscount,
     monthlyBillingPaid,
     monthlyBillingPending,
     deliveryRate,
