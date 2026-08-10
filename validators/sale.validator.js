@@ -99,7 +99,12 @@ export const validateAddSale = [
     .withMessage("Price per Unit is Required!")
     .isFloat({ min: 1 })
     .withMessage("Price per Unit must be at least ₨1!"),
-  // VALIDATING OPTIONAL PAID AMOUNT FIELD (CUSTOMER SALES ONLY — AUTO-SET FOR SHOP)
+  // VALIDATING OPTIONAL DISCOUNT FIELD
+  body("discount")
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ min: 0 })
+    .withMessage("Discount must be at least ₨0!"),
+  // VALIDATING OPTIONAL PAID AMOUNT FIELD
   body("paidAmount")
     .optional({ nullable: true })
     .isFloat({ min: 0 })
@@ -148,6 +153,11 @@ export const validateUpdateSale = [
     .optional()
     .isFloat({ min: 1 })
     .withMessage("Price per Unit must be at least ₨1!"),
+  // VALIDATING OPTIONAL DISCOUNT FIELD
+  body("discount")
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ min: 0 })
+    .withMessage("Discount must be at least ₨0!"),
   // VALIDATING OPTIONAL PAID AMOUNT FIELD
   body("paidAmount")
     .optional({ nullable: true })
