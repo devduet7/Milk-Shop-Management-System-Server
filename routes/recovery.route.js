@@ -4,6 +4,7 @@ import {
   validateDeleteSaleRecord,
   validateUpdateSalePayment,
   validateAddDeliveryPayment,
+  validateSetMonthlyDiscount,
   validateAddBulkDeliveryPayment,
 } from "../validators/recovery.validator.js";
 import {
@@ -11,6 +12,7 @@ import {
   deleteSaleRecord,
   updateSalePayment,
   addDeliveryPayment,
+  setMonthlyDiscount,
   addBulkDeliveryPayment,
 } from "../controllers/recovery.controller.js";
 import express from "express";
@@ -58,6 +60,13 @@ router.post(
   requirePermission("recoveries", "write"),
   validateAddBulkDeliveryPayment,
   addBulkDeliveryPayment,
+);
+// SET OR UPDATE A CUSTOMER'S MILK DELIVERY DISCOUNT FOR A BILLING MONTH — UPSERT, HENCE PUT
+router.put(
+  "/delivery/:id/discount",
+  requirePermission("recoveries", "write"),
+  validateSetMonthlyDiscount,
+  setMonthlyDiscount,
 );
 
 // <== EXPORTING ROUTER ==>
