@@ -103,6 +103,7 @@ const buildStats = (facetResult) => {
       (totalsData?.totalYoghurtSold || 0).toFixed(3),
     ),
     totalPending: parseFloat((totalsData?.totalPending || 0).toFixed(2)),
+    totalDiscount: parseFloat((totalsData?.totalDiscount || 0).toFixed(2)),
     totalSales: totalsData?.totalSales || 0,
   };
 };
@@ -210,6 +211,8 @@ export const getSales = expressAsyncHandler(async (req, res) => {
                 },
                 // TOTAL PENDING BALANCE (CUSTOMER SALES ONLY — SHOP IS ALWAYS 0)
                 totalPending: { $sum: "$pendingAmount" },
+                // TOTAL DISCOUNT GIVEN ACROSS THE PERIOD — SO THE OWNER CAN SEE WHAT WAS GIVEN AWAY
+                totalDiscount: { $sum: "$discount" },
                 // TOTAL SALE COUNT
                 totalSales: { $sum: 1 },
               },
@@ -281,6 +284,7 @@ export const addSale = expressAsyncHandler(async (req, res) => {
     productType,
     quantity,
     pricePerUnit,
+    discount,
     paidAmount,
     date,
     note,
@@ -304,10 +308,33 @@ export const addSale = expressAsyncHandler(async (req, res) => {
     // RETURNING FROM FUNCTION
     return;
   }
-  // COMPUTING TOTAL AMOUNT FROM QUANTITY AND PRICE PER UNIT
-  const totalAmount = parseFloat(
-    (parsedQuantity * parsedPricePerUnit).toFixed(2),
-  );
+  // COMPUTING SUBTOTAL FROM QUANTITY AND PRICE PER UNIT — BEFORE DISCOUNT
+  const subtotal = parseFloat((parsedQuantity * parsedPricePerUnit).toFixed(2));
+  // PARSING DISCOUNT AS FLOAT — DEFAULTS TO 0 IF NOT PROVIDED
+  const parsedDiscount = discount !== undefined ? parseFloat(discount) : 0;
+  // GUARDING AGAINST A NON-FINITE OR NEGATIVE DISCOUNT
+  if (!Number.isFinite(parsedDiscount) || parsedDiscount < 0) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: "Discount must be a Valid Non-Negative Number!",
+      success: false,
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // GUARDING AGAINST A DISCOUNT LARGER THAN THE SUBTOTAL
+  if (parsedDiscount > subtotal) {
+    // RETURNING ERROR RESPONSE
+    res.status(400).json({
+      message: `Discount cannot Exceed the Subtotal of ₨${subtotal.toLocaleString()}!`,
+      success: false,
+      data: { subtotal },
+    });
+    // RETURNING FROM FUNCTION
+    return;
+  }
+  // COMPUTING TOTAL AMOUNT — THE NET, BILLABLE AMOUNT AFTER DISCOUNT
+  const totalAmount = parseFloat((subtotal - parsedDiscount).toFixed(2));
   // RESOLVING DATE (DEFAULT TO TODAY IF NOT PROVIDED)
   const resolvedDate = date?.trim() || getTodayDateStr();
   // DECLARING RESOLVED PAID AMOUNT
@@ -348,6 +375,8 @@ export const addSale = expressAsyncHandler(async (req, res) => {
     productType,
     quantity: parsedQuantity,
     pricePerUnit: parsedPricePerUnit,
+    subtotal,
+    discount: parsedDiscount,
     totalAmount,
     paidAmount: resolvedPaidAmount,
     pendingAmount: resolvedPendingAmount,
@@ -384,6 +413,7 @@ export const updateSale = expressAsyncHandler(async (req, res) => {
     productType,
     quantity,
     pricePerUnit,
+    discount,
     paidAmount,
     date,
     note,
@@ -411,8 +441,14 @@ export const updateSale = expressAsyncHandler(async (req, res) => {
   if (quantity !== undefined) sale.quantity = parseFloat(quantity);
   // UPDATING PRICE PER UNIT IF PROVIDED
   if (pricePerUnit !== undefined) sale.pricePerUnit = parseFloat(pricePerUnit);
-  // RECOMPUTING TOTAL AMOUNT WHENEVER QUANTITY OR PRICE CHANGES
-  if (quantity !== undefined || pricePerUnit !== undefined) {
+  // UPDATING DISCOUNT IF PROVIDED (MONEY, NEVER A PERCENTAGE)
+  if (discount !== undefined) sale.discount = parseFloat(discount);
+  // RECOMPUTING SUBTOTAL AND TOTAL AMOUNT WHENEVER QUANTITY, PRICE, OR DISCOUNT CHANGES
+  if (
+    quantity !== undefined ||
+    pricePerUnit !== undefined ||
+    discount !== undefined
+  ) {
     // GUARDING AGAINST NON-FINITE OR NON-POSITIVE VALUES BEFORE MULTIPLYING
     if (
       !Number.isFinite(sale.quantity) ||
@@ -428,10 +464,31 @@ export const updateSale = expressAsyncHandler(async (req, res) => {
       // RETURNING FROM FUNCTION
       return;
     }
-    // RECOMPUTE USING FINAL POST-UPDATE VALUES OF BOTH FIELDS
-    sale.totalAmount = parseFloat(
-      (sale.quantity * sale.pricePerUnit).toFixed(2),
-    );
+    // GUARDING AGAINST A NON-FINITE OR NEGATIVE DISCOUNT
+    if (!Number.isFinite(sale.discount) || sale.discount < 0) {
+      // RETURNING ERROR RESPONSE
+      res.status(400).json({
+        message: "Discount must be a Valid Non-Negative Number!",
+        success: false,
+      });
+      // RETURNING FROM FUNCTION
+      return;
+    }
+    // RECOMPUTE SUBTOTAL USING FINAL POST-UPDATE VALUES OF QUANTITY AND PRICE
+    sale.subtotal = parseFloat((sale.quantity * sale.pricePerUnit).toFixed(2));
+    // GUARDING AGAINST A DISCOUNT LARGER THAN THE RECOMPUTED SUBTOTAL
+    if (sale.discount > sale.subtotal) {
+      // RETURNING ERROR RESPONSE WITH CURRENT SUBTOTAL
+      res.status(400).json({
+        message: `Discount cannot Exceed the Subtotal of ₨${sale.subtotal.toLocaleString()}!`,
+        success: false,
+        data: { subtotal: sale.subtotal },
+      });
+      // RETURNING FROM FUNCTION
+      return;
+    }
+    // RECOMPUTE TOTAL AMOUNT — THE NET, BILLABLE AMOUNT AFTER DISCOUNT
+    sale.totalAmount = parseFloat((sale.subtotal - sale.discount).toFixed(2));
   }
   // RECOMPUTING PAYMENT FIELDS BASED ON SALE TYPE
   if (sale.saleType === "shop") {
