@@ -56,7 +56,20 @@ const saleSchema = new mongoose.Schema(
       required: true,
       min: [1, "Price per Unit must be at least ₨1!"],
     },
-    // TOTAL AMOUNT FIELD (DERIVED: QUANTITY × PRICE PER UNIT — STORED FOR PERFORMANCE)
+    // SUBTOTAL FIELD (DERIVED: QUANTITY × PRICE PER UNIT, BEFORE DISCOUNT — STORED FOR REPORTING)
+    subtotal: {
+      type: Number,
+      required: true,
+      min: [0, "Subtotal cannot be Negative!"],
+    },
+    // DISCOUNT FIELD (MONEY KNOCKED OFF THE SUBTOTAL — NEVER A PERCENTAGE)
+    discount: {
+      type: Number,
+      required: true,
+      default: 0,
+      min: [0, "Discount cannot be Negative!"],
+    },
+    // TOTAL AMOUNT FIELD (DERIVED: SUBTOTAL - DISCOUNT — STORED FOR REPORTING)
     totalAmount: {
       type: Number,
       required: true,
