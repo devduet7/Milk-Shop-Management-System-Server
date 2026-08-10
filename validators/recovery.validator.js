@@ -124,6 +124,36 @@ export const validateAddBulkDeliveryPayment = [
   handleValidationErrors,
 ];
 
+// <== SET MONTHLY DISCOUNT VALIDATION RULES ==>
+export const validateSetMonthlyDiscount = [
+  // VALIDATING CUSTOMER ID PARAM
+  param("id")
+    .notEmpty()
+    .withMessage("Customer ID is Required!")
+    .isMongoId()
+    .withMessage("Invalid Customer ID!"),
+  // VALIDATING AMOUNT FIELD (MONEY, NEVER A PERCENTAGE)
+  body("amount")
+    .notEmpty()
+    .withMessage("Discount Amount is Required!")
+    .isFloat({ min: 1 })
+    .withMessage("Discount Amount must be at least ₨1!"),
+  // VALIDATING BILLING MONTH FIELD
+  body("billingMonth")
+    .notEmpty()
+    .withMessage("Billing Month is Required!")
+    .matches(/^\d{4}-\d{2}$/)
+    .withMessage("Billing Month must be in YYYY-MM Format!"),
+  // VALIDATING OPTIONAL NOTE FIELD
+  body("note")
+    .optional({ nullable: true, checkFalsy: true })
+    .trim()
+    .isLength({ max: 200 })
+    .withMessage("Note must not exceed 200 Characters!"),
+  // HANDLING VALIDATION ERRORS
+  handleValidationErrors,
+];
+
 // <== UPDATE SALE PAYMENT VALIDATION RULES ==>
 export const validateUpdateSalePayment = [
   // VALIDATING SALE ID PARAM
@@ -138,6 +168,11 @@ export const validateUpdateSalePayment = [
     .withMessage("Paid Amount is Required!")
     .isFloat({ min: 0 })
     .withMessage("Paid Amount must be at least ₨0!"),
+  // VALIDATING OPTIONAL DISCOUNT FIELD
+  body("discount")
+    .optional({ nullable: true, checkFalsy: true })
+    .isFloat({ min: 0 })
+    .withMessage("Discount must be at least ₨0!"),
   // HANDLING VALIDATION ERRORS
   handleValidationErrors,
 ];
