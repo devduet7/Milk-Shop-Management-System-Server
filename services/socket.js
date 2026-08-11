@@ -3,6 +3,7 @@ import http from "http";
 import express from "express";
 import jwt from "jsonwebtoken";
 import { Server } from "socket.io";
+import { env } from "../config/env.js";
 import { Session } from "../models/session.model.js";
 import allowedOrigins from "../config/allowedOrigins.js";
 
@@ -73,7 +74,7 @@ io.use(async (socket, next) => {
   //  TRYING TO VERIFY THE ACCESS TOKEN
   try {
     // VERIFYING THE ACCESS TOKEN SIGNATURE
-    decodedAccess = jwt.verify(accessToken, process.env.AT_SECRET, {
+    decodedAccess = jwt.verify(accessToken, env.AT_SECRET, {
       ignoreExpiration: true,
     });
     // GUARD: PAYLOAD MISSING REQUIRED CLAIMS
@@ -94,7 +95,7 @@ io.use(async (socket, next) => {
   // TRYING TO VERIFY THE REFRESH TOKEN
   try {
     // VERIFYING THE REFRESH TOKEN SIGNATURE
-    decodedRefresh = jwt.verify(refreshTokenCookie, process.env.RT_SECRET, {
+    decodedRefresh = jwt.verify(refreshTokenCookie, env.RT_SECRET, {
       ignoreExpiration: true,
     });
     // GUARD: NO SESSION ID EMBEDDED
