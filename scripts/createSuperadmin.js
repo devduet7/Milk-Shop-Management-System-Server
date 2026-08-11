@@ -1,5 +1,4 @@
 // <== IMPORTS ==>
-import "../env.js";
 import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
 import readline from "readline/promises";
