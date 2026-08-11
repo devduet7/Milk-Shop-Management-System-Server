@@ -1,5 +1,6 @@
 // <== IMPORTS ==>
 import jwt from "jsonwebtoken";
+import { env } from "../config/env.js";
 
 /**
  * AUTHENTICATION MIDDLEWARE
@@ -29,7 +30,7 @@ const isAuthenticated = (req, res, next) => {
   let decodedToken;
   try {
     // VERIFYING AND DECODING THE ACCESS TOKEN
-    decodedToken = jwt.verify(accessToken, process.env.AT_SECRET);
+    decodedToken = jwt.verify(accessToken, env.AT_SECRET);
   } catch (error) {
     // IF TOKEN IS EXPIRED, CLIENT SHOULD CALL REFRESH TOKEN ENDPOINT
     if (error.name === "TokenExpiredError") {

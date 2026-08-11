@@ -6,6 +6,7 @@ import {
 import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
 import { randomUUID } from "crypto";
+import { env } from "../config/env.js";
 import expressAsyncHandler from "express-async-handler";
 import { User, USER_ROLES } from "../models/user.model.js";
 import { sendInviteOtp } from "../services/emailService.js";
@@ -16,7 +17,7 @@ const generateOtpCode = () =>
 
 // <== HELPER: BUILD THE ACCOUNT SETUP LINK FOR AN INVITED USER ==>
 const buildSetupUrl = (email) =>
-  `${process.env.CLIENT_URL}/setup?email=${encodeURIComponent(email)}`;
+  `${env.CLIENT_URL}/setup?email=${encodeURIComponent(email)}`;
 
 // <== HELPER: BUILD SAFE USER OBJECT FOR API RESPONSES ==>
 const buildSafeUser = (user) => ({
