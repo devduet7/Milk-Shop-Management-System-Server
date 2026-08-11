@@ -1,5 +1,6 @@
 // <== IMPORTS ==>
 import jwt from "jsonwebtoken";
+import { env } from "../config/env.js";
 import { Session } from "../models/session.model.js";
 import expressAsyncHandler from "express-async-handler";
 import { User, USER_ROLES } from "../models/user.model.js";
@@ -31,7 +32,7 @@ const getCurrentSessionId = (req) => {
     // GUARD: NO REFRESH TOKEN COOKIE PRESENT
     if (!refreshTokenFromCookie) return null;
     // DECODING WITHOUT ENFORCING EXPIRY
-    const decoded = jwt.verify(refreshTokenFromCookie, process.env.RT_SECRET, {
+    const decoded = jwt.verify(refreshTokenFromCookie, env.RT_SECRET, {
       ignoreExpiration: true,
     });
     // RETURNING THE SESSION ID, IF PRESENT
