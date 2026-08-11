@@ -6,6 +6,7 @@ import {
 } from "../utils/jwtUtils.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { env } from "../config/env.js";
 import { UAParser } from "ua-parser-js";
 import { User } from "../models/user.model.js";
 import { Account } from "../models/account.model.js";
@@ -20,26 +21,26 @@ const SESSION_EXPIRY_BUFFER_MS = 24 * 60 * 60 * 1000;
 const setAuthCookies = (res, accessToken, refreshToken) => {
   // CALCULATING ACCESS TOKEN MAX AGE FROM ENV OR DEFAULT TO 15 MINUTES
   const accessTokenMaxAge = parseDurationToMs(
-    process.env.AT_EXPIRES_IN,
+    env.AT_EXPIRES_IN,
     15 * 60 * 1000,
   );
   // CALCULATING REFRESH TOKEN MAX AGE FROM ENV OR DEFAULT TO 30 DAYS
   const refreshTokenMaxAge = parseDurationToMs(
-    process.env.RT_EXPIRES_IN,
+    env.RT_EXPIRES_IN,
     30 * 24 * 60 * 60 * 1000,
   );
   // SETTING ACCESS TOKEN IN HTTP-ONLY COOKIE
   res.cookie("accessToken", accessToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    secure: env.NODE_ENV === "production",
+    sameSite: env.NODE_ENV === "production" ? "none" : "lax",
     maxAge: accessTokenMaxAge,
   });
   // SETTING REFRESH TOKEN IN HTTP-ONLY COOKIE
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    secure: env.NODE_ENV === "production",
+    sameSite: env.NODE_ENV === "production" ? "none" : "lax",
     maxAge: refreshTokenMaxAge,
   });
 };
@@ -165,7 +166,7 @@ export const login = expressAsyncHandler(async (req, res) => {
   // CALCULATING SESSION EXPIRY — MIRRORS THE REFRESH TOKEN LIFETIME PLUS A SAFETY BUFFER
   const sessionExpiresAt = new Date(
     Date.now() +
-      parseDurationToMs(process.env.RT_EXPIRES_IN, 30 * 24 * 60 * 60 * 1000) +
+      parseDurationToMs(env.RT_EXPIRES_IN, 30 * 24 * 60 * 60 * 1000) +
       SESSION_EXPIRY_BUFFER_MS,
   );
   // CREATING THE SESSION DOCUMENT
@@ -265,7 +266,7 @@ export const refreshToken = expressAsyncHandler(async (req, res) => {
   let decodedToken;
   try {
     // VERIFYING AND DECODING THE REFRESH TOKEN
-    decodedToken = jwt.verify(refreshTokenFromCookie, process.env.RT_SECRET);
+    decodedToken = jwt.verify(refreshTokenFromCookie, env.RT_SECRET);
   } catch (error) {
     // IF REFRESH TOKEN IS EXPIRED
     if (error.name === "TokenExpiredError") {
@@ -373,7 +374,7 @@ export const refreshToken = expressAsyncHandler(async (req, res) => {
   // CALCULATING THE SLIDING SESSION EXPIRY
   const extendedExpiresAt = new Date(
     Date.now() +
-      parseDurationToMs(process.env.RT_EXPIRES_IN, 30 * 24 * 60 * 60 * 1000) +
+      parseDurationToMs(env.RT_EXPIRES_IN, 30 * 24 * 60 * 60 * 1000) +
       SESSION_EXPIRY_BUFFER_MS,
   );
   // UPDATING THE SESSION DOCUMENT'S FIELDS TO REFLECT THE SLIDING EXPIRY AND LAST ACTIVE TIMESTAMP
@@ -419,11 +420,9 @@ export const logout = expressAsyncHandler(async (req, res) => {
   if (refreshTokenFromCookie) {
     try {
       // VERIFYING THE REFRESH TOKEN, IGNORING EXPIRATION — LOGOUT SHOULD STILL DEACTIVATE
-      const decodedToken = jwt.verify(
-        refreshTokenFromCookie,
-        process.env.RT_SECRET,
-        { ignoreExpiration: true },
-      );
+      const decodedToken = jwt.verify(refreshTokenFromCookie, env.RT_SECRET, {
+        ignoreExpiration: true,
+      });
       // IF THE TOKEN CARRIES A SESSION ID, DEACTIVATE THAT SESSION
       if (decodedToken?.sessionId) {
         // DEACTIVATING THE SESSION — BEST-EFFORT, DOES NOT BLOCK THE LOGOUT RESPONSE ON FAILURE
@@ -444,14 +443,14 @@ export const logout = expressAsyncHandler(async (req, res) => {
   // CLEARING ACCESS TOKEN COOKIE
   res.clearCookie("accessToken", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    secure: env.NODE_ENV === "production",
+    sameSite: env.NODE_ENV === "production" ? "none" : "lax",
   });
   // CLEARING REFRESH TOKEN COOKIE
   res.clearCookie("refreshToken", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    secure: env.NODE_ENV === "production",
+    sameSite: env.NODE_ENV === "production" ? "none" : "lax",
   });
   // RETURNING SUCCESS RESPONSE
   res.status(200).json({
