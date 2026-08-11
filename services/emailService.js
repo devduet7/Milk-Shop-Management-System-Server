@@ -11,6 +11,7 @@ import {
   dailyReportTemplate,
   monthlyReportTemplate,
 } from "./reportEmailTemplates.js";
+import { env } from "../config/env.js";
 
 // <== BREVO TRANSACTIONAL EMAIL API URL ==>
 const BREVO_API_URL = "https://api.brevo.com/v3/smtp/email";
@@ -22,13 +23,13 @@ const sendEmail = async ({ to, toName, subject, htmlContent }) => {
     method: "POST",
     headers: {
       accept: "application/json",
-      "api-key": process.env.BREVO_API_KEY,
+      "api-key": env.BREVO_API_KEY,
       "content-type": "application/json",
     },
     body: JSON.stringify({
       sender: {
-        name: process.env.BREVO_SENDER_NAME || "Milk Shop Management",
-        email: process.env.BREVO_SENDER_EMAIL,
+        name: env.BREVO_SENDER_NAME || "Milk Shop Management",
+        email: env.BREVO_SENDER_EMAIL,
       },
       to: [{ email: to, name: toName || to }],
       subject,
