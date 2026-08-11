@@ -1,9 +1,9 @@
 // <== IMPORTS ==>
-import "./env.js";
 import path from "path";
 import cors from "cors";
 import express from "express";
 import mongoose from "mongoose";
+import { env } from "./config/env.js";
 import cookieParser from "cookie-parser";
 import rootRoute from "./routes/root.route.js";
 import saleRoutes from "./routes/sale.route.js";
@@ -38,7 +38,7 @@ connectDB();
 const __dirname = getDirName(import.meta.url);
 
 // <== PORT ==>
-const PORT = process.env.PORT || 3000;
+const PORT = env.PORT;
 
 // <== MIDDLEWARE> ==>
 // CORS MIDDLEWARE
