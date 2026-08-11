@@ -1,5 +1,8 @@
+// <== IMPORTS ==>
+import { env } from "./env.js";
+
 // <== CLIENT URL CONFIGURATION ==>
-const clientUrl = process.env.CLIENT_URL ?? "";
+const clientUrl = env.CLIENT_URL;
 
 // <== ALLOWED ORIGINS FOR CORS ==>
 const allowedOrigins = clientUrl
